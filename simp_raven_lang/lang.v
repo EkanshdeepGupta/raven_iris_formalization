@@ -42,10 +42,6 @@ Inductive expr :=
 | UnOp (op : un_op) (e : expr)
 | BinOp (op : bin_op) (e1 e2 : expr)
 | IfE (e1 e2 e3 : expr)
-(* | Alloc (e : expr) (fs: list string) *)
-(* | Tuple (es : list expr)
-| TupleLookUp (e : expr) (ind : Z) *)
-(* | SkipE (e : expr) *)
 | StuckE (* stuck expression *)
 with
 val :=
@@ -59,57 +55,55 @@ Qed.
 End expr.
 
 Inductive stmt :=
-| Return (e : expr)
-| IfS (e : expr) (s1 s2 : stmt) (s : stmt)
-| Assign (v : var) (e : expr) (s : stmt)
-| Free (e : expr) (s : stmt)
+| Seq (s1 s2 : stmt)
+(* | Return (e : expr) *)
+| IfS (e : expr) (s1 s2 : stmt)
+| Assign (v : var) (e : expr)
+(* | Free (e : expr) *)
 | SkipS
 | StuckS (* stuck statement *)
-| ExprS (e : expr) (s : stmt)
-| Call (v : option var) (proc : proc_name) (args : list expr) (s : stmt)
-| FldWr (e1 : expr) (fld : fld_name) (e2 : expr) (s : stmt) 
-| FldRd (v : var) (e : expr) (fld : fld_name) (s : stmt)
-| CAS (v : var)(e1 : expr) (fld : fld_name) (e2 : expr) (e3 : expr) (s : stmt)
-| Alloc (e : expr) (fs: list (fld_name * val)) (s : stmt)
-| Spawn (proc : proc_name) (args : list expr) (s : stmt)
+(* | ExprS (e : expr) *)
+| Call (v : var) (proc : proc_name) (args : list expr)
+| FldWr (e1 : expr) (fld : fld_name) (e2 : expr) 
+| FldRd (v : var) (e : expr) (fld : fld_name)
+| CAS (v : var)(e1 : expr) (fld : fld_name) (e2 : expr) (e3 : expr)
+| Alloc (v : var) (fs: list (fld_name * val))
+| Spawn (proc : proc_name) (args : list expr)
 .
 
-Fixpoint stmt_append (s1 s2 : stmt) : stmt :=
-  match s1 with
-  | Return e => Return e
-  | IfS e s1 s2 s => IfS e s1 s2 (stmt_append s s2)
-  | Assign v e s => Assign v e (stmt_append s s2)
-  | Free e s => Free e (stmt_append s s2)
-  | SkipS => s2
-  | StuckS => StuckS
-  | ExprS e s => ExprS e (stmt_append s s2)
-  | Call v proc args s => Call v proc args (stmt_append s s2)
-  | FldWr e1 f e2 s => FldWr e1 f e2 (stmt_append s s2)
-  | FldRd e1 e2 f s => FldRd e1 e2 f (stmt_append s s2)
-  | CAS vr e1 f e2 e3 s => CAS vr e1 f e2 e3 (stmt_append s s2)
-  | Alloc e fs s => Alloc e fs (stmt_append s s2)
-  | Spawn proc args s => Spawn proc args (stmt_append s s2)
-  end.
+Definition stmt_append (s1 s2 : stmt) : stmt :=
+  Seq s1 s2.
 
-Notation of_val := Val (only parsing).
 
-Definition to_val (e : expr) : option val :=
-  match e with
-  | Val v => Some v
-  | _ => None
-  end.
-(* State Model *)
 Section state.
 
+Inductive heap_addr :=
+| heap_addr_constr:  loc -> fld_name -> heap_addr.
+
+Global Instance heap_addr_eq : EqDecision heap_addr.
+Proof. solve_decision. Qed.
+
+Global Declare Instance heap_addr_countable : Countable heap_addr.
+
+
+
 (* Heap maps locations to field-value pairs *)
-Definition heap := gmap loc (gmap fld_name val).
+Definition heap := gmap heap_addr val.
 
 (* Stack frame contains local variables and current statement *)
+
+
+
+Definition stack_id := Z.
+
 Record stack_frame := StackFrame {
   locals : gmap var val;
-  curr_stmt : stmt;
-  ret_var : option var;
+  (* curr_stmt : stmt; *)
+  (* ret_var : option var; *)
+  (* ret_stack := stack_id; *)
 }.
+
+Definition stack_map := gmap stack_id stack_frame.
 
 Record proc := Proc {
   proc_name_val : proc_name;
@@ -124,46 +118,52 @@ Record state := State {
   (* stack : list stack_frame;  *)
   (* moving stack frames from state to runtime_expr *)
   procs : gmap proc_name proc;
+  stack : gmap stack_id stack_frame;
+  max_stack_id : Z;
 }.
 
+Definition fresh_stk_id (σ : state) := (Z.to_nat (σ.(max_stack_id)) + 1, State σ.(global_heap) σ.(procs) σ.(stack) (1 + σ.(max_stack_id))).
+
 (* Empty state *)
-Definition empty_state : state := State ∅ ∅.
+Definition empty_state : state := State ∅ ∅ ∅ 0.
 
 (* Helper functions for state manipulation *)
 Definition update_heap (σ : state) (l : loc) (f : fld_name) (v : val) : state :=
   let h := σ.(global_heap) in
-  let fields := default ∅ (h !! l) in
-  let new_fields := <[f := v]> fields in
-  State (<[l := new_fields]> h) σ.(procs).
 
-Definition stack := list stack_frame.
+  (* let fields := default ∅ (h !! l) in
+  let new_fields := <[f := v]> fields in *)
+  State (<[heap_addr_constr l f := v]> h) σ.(procs) σ.(stack) σ.(max_stack_id).
+
+(* Definition stack := list stack_frame. *)
 
 Definition lookup_heap (σ : state) (l : loc) (f : fld_name) : option val :=
-  σ.(global_heap) !! l ≫= (λ fields, fields !! f).
-
-
+  σ.(global_heap) !! (heap_addr_constr l f).
 
   
 Definition update_frame_lvar (frame : stack_frame) (x : var) (v : val) : stack_frame :=
-  StackFrame (<[x := v]> frame.(locals)) frame.(curr_stmt) frame.(ret_var).
+  StackFrame (<[x := v]> frame.(locals)) .
 
-Definition update_lvar (s : stack) (x : var) (v : val) : stack :=
-  match s with
-  | [] => []
-  | frame :: rest => update_frame_lvar frame x v :: rest
+Definition update_lvar (σ : state) (x : var) (stk_id : stack_id) (v : val) : state :=
+  let s := σ.(stack) in
+  let s := 
+    match s !! stk_id with
+    | None => s
+    | Some stk_frm =>
+      let new_stk_frame := update_frame_lvar stk_frm x v in
+      (<[stk_id := new_stk_frame]> s) 
+    end
+  in
+  State σ.(global_heap) σ.(procs) σ.(stack) σ.(max_stack_id).
+
+Definition lookup_lvar (σ : state) (x : var) (stk_id : stack_id) : option val :=
+  match σ.(stack) !! stk_id with
+  | Some stk_frame => stk_frame.(locals) !! x
+  | None => None
   end.
 
-Definition lookup_lvar (s : stack) (x : var) : option val :=
-  match s with
-  | [] => None
-  | frame :: _ => frame.(locals) !! x
-  end.
-
-Definition pop_frame (s : stack) : option (stack * stack_frame) :=
-  match s with
-  | nil => None
-  | frame :: rest => Some (rest, frame)
-  end.
+Definition update_stack (σ : state) (stk_id : stack_id) (frame : stack_frame) :=
+  State σ.(global_heap) σ.(procs) (<[stk_id := frame]> σ.(stack)) σ.(max_stack_id).
 
 Definition lookup_proc (σ : state) (pr_name : proc_name) : option proc :=
   σ.(procs) !! pr_name.
@@ -186,19 +186,20 @@ Fixpoint subst_expr (e : expr) (subst : list (var * expr)) : expr :=
   (* Assuming that local variables of each procedure are disjoint *)
 Fixpoint subst_stmt (s : stmt) (subst : list (var * expr)) : stmt :=
   match s with
-  | Return e => Return (subst_expr e subst)
-  | IfS e s1 s2 s => IfS (subst_expr e subst) (subst_stmt s1 subst) (subst_stmt s2 subst) (subst_stmt s subst)
-  | Assign v e s => Assign v (subst_expr e subst) (subst_stmt s subst)
-  | Free e s => Free (subst_expr e subst) (subst_stmt s subst)
+  | Seq s1 s2 => Seq (subst_stmt s1 subst) (subst_stmt s2 subst)
+  (* | Return e => Return (subst_expr e subst) *)
+  | IfS e s1 s2 => IfS (subst_expr e subst) (subst_stmt s1 subst) (subst_stmt s2 subst)
+  | Assign v e => Assign v (subst_expr e subst)
+  (* | Free e => Free (subst_expr e subst) *)
   | SkipS => SkipS
   | StuckS => StuckS
-  | ExprS e s => ExprS (subst_expr e subst) (subst_stmt s subst)
-  | Call v proc args s => Call v proc (map (λ e, subst_expr e subst) args) (subst_stmt s subst)
-  | FldWr e1 f e2 s => FldWr (subst_expr e1 subst) f (subst_expr e2 subst) (subst_stmt s subst)
-  | FldRd v e f s => FldRd v e f (subst_stmt s subst)
-  | CAS vr e1 f e2 e3 s => CAS vr (subst_expr e1 subst) f (subst_expr e2 subst) (subst_expr e3 subst) (subst_stmt s subst)
-  | Alloc e fs s => Alloc (subst_expr e subst) fs (subst_stmt s subst)
-  | Spawn proc args s => Spawn proc (map (λ e, subst_expr e subst) args) (subst_stmt s subst)
+  (* | ExprS e => ExprS (subst_expr e subst) *)
+  | Call v proc args => Call v proc (map (λ e, subst_expr e subst) args)
+  | FldWr e1 f e2 => FldWr (subst_expr e1 subst) f (subst_expr e2 subst)
+  | FldRd v e f => FldRd v e f
+  | CAS vr e1 f e2 e3 => CAS vr (subst_expr e1 subst) f (subst_expr e2 subst) (subst_expr e3 subst)
+  | Alloc v fs => Alloc v fs
+  | Spawn proc args => Spawn proc (map (λ e, subst_expr e subst) args)
   end.
 End state.
 
@@ -208,68 +209,63 @@ Definition fresh_loc (h : heap) : loc :=
 (* Operational Semantics *)
 Section semantics.
 
-Inductive runtime_expr :=
-| Expr (e : rtexpr) (stack : stack)
-| Stmt (s : rtstmt) (stack : stack)
-with rtexpr :=
-| RTVar (x : var)
-| RTVal (v : val)
-| RTUnOp (op : un_op) (e : rtexpr)
-| RTBinOp (op : bin_op) (e1 e2 : rtexpr)
-| RTIfE (e1 e2 e3 : rtexpr)
-| RTStuckE
-with rtstmt :=
-| RTReturn (e : rtexpr)
-| RTIfS (e : rtexpr) (s1 : rtstmt) (s2 : rtstmt) (s : rtstmt)
-| RTAssign (v : var) (e : rtexpr) (s : rtstmt)
-| RTFree (e : rtexpr) (s : rtstmt)
+Inductive runtime_stmt :=
+| RTSeq (s1 s2 : runtime_stmt)
+| RTIfS (e : expr) (s1 s2 : runtime_stmt) (stk_id : stack_id)
+| RTAssign (v : var) (e : expr) (stk_id : stack_id)
+(* | RTFree (e : expr) (stk_id : stack_id) *)
+| RTSkipS (stk_id : stack_id)
 | RTStuckS
-| RTExprS (e : rtexpr) (s : rtstmt)
-| RTCall (v : option var) (proc : proc_name) (args : list rtexpr) (s : rtstmt)
-| RTFldWr (e1 : rtexpr) (fld : fld_name) (e2 : rtexpr) (s : rtstmt)
-| RTFldRd (v : var) (e : rtexpr) (fld : fld_name) (s : rtstmt)
-| RTCAS (vr : var) (e1 : rtexpr) (fld : fld_name) (e2 : rtexpr) (e3 : rtexpr) (s : rtstmt)
-| RTAlloc (e : rtexpr) (fs: list (fld_name * val)) (s : rtstmt)
-| RTSpawn (proc : proc_name) (args : list rtexpr) (s : rtstmt).
+| RTVal (v : val)
+| RTCall (v : var) (proc : proc_name) (args : list expr) (stk_id : stack_id)
+| RTActiveCall (v : var) (s : runtime_stmt) (callee_stk_id : stack_id) (caller_stk_id : stack_id) 
+| RTFldWr (e1 : expr) (fld : fld_name) (e2 : expr) (stk_id : stack_id)
+| RTFldRd (v : var) (e : expr) (fld : fld_name) (stk_id : stack_id)
+| RTCAS (v : var) (e1 : expr) (fld : fld_name) (e2 : expr) (e3 : expr) (stk_id : stack_id)
+| RTAlloc (v : var) (fs : list (fld_name * val)) (stk_id : stack_id)
+| RTSpawn (proc : proc_name) (args : list expr) (stk_id : stack_id)
+.
 
-Fixpoint to_rtexpr (e : expr) : rtexpr :=
-  match e with
-  | Var x => RTVar x
-  | Val v => RTVal v
-  | UnOp op e => RTUnOp op (to_rtexpr e)
-  | BinOp op e1 e2 => RTBinOp op (to_rtexpr e1) (to_rtexpr e2)
-  | IfE e1 e2 e3 => RTIfE (to_rtexpr e1) (to_rtexpr e2) (to_rtexpr e3)
-  | StuckE => RTStuckE
+Definition of_val v := RTVal v.
+Definition to_val (e : runtime_stmt) := match e with
+| RTVal v => Some v
+| _ => None
+end.
+
+Lemma to_of_val v : to_val (of_val v) = Some v.
+Proof. by destruct v. Qed.
+
+Lemma of_to_val e v : to_val e = Some v → of_val v = e.
+Proof. destruct e=>//=. by intros [= <-]. Qed.
+
+Inductive ectx_item :=
+| SeqCtx (s : runtime_stmt)
+| ActiveCallCtx (v : var) (c_id : stack_id) (cr_id : stack_id).
+
+Definition fill_item (Ki : ectx_item) (s : runtime_stmt) : runtime_stmt :=
+  match Ki with
+  | SeqCtx s1 => RTSeq s s1
+  | ActiveCallCtx v c_id cr_id => RTActiveCall v s c_id cr_id
   end.
 
-Definition coerce_rtexpr := to_rtexpr.
-Coercion coerce_rtexpr : expr >-> rtexpr.
-
-Fixpoint to_rtstmt (s : stmt) : rtstmt :=
-  match s with
-  | Return e => RTReturn (to_rtexpr e)
-  | IfS e s1 s2 s => RTIfS (to_rtexpr e) (to_rtstmt s1) (to_rtstmt s2) (to_rtstmt s)
-  | Assign v e s => RTAssign v (to_rtexpr e) (to_rtstmt s)
-  | Free e s => RTFree (to_rtexpr e) (to_rtstmt s)
-  | SkipS => RTStuckS
-  | StuckS => RTStuckS
-  | ExprS e s => RTExprS (to_rtexpr e) (to_rtstmt s)
-  | Call v proc args s => RTCall v proc (map to_rtexpr args) (to_rtstmt s)
-  | FldWr e1 f e2 s => RTFldWr (to_rtexpr e1) f (to_rtexpr e2) (to_rtstmt s)
-  | FldRd v e f s => RTFldRd v (to_rtexpr e) f (to_rtstmt s)
-  | CAS vr e1 f e2 e3 s => RTCAS vr (to_rtexpr e1) f (to_rtexpr e2) (to_rtexpr e3) (to_rtstmt s)
-  | Alloc e fs s => RTAlloc (to_rtexpr e) fs (to_rtstmt s)
-  | Spawn proc args s => RTSpawn proc (map to_rtexpr args) (to_rtstmt s)
-  end.
-
-Definition coerce_rtstmt := to_rtstmt.
-Coercion coerce_rtstmt : stmt >-> rtstmt.
-
-Definition expr_to_runtime_expr (e : expr) (stk : stack): runtime_expr :=
-  Expr (to_rtexpr e) stk.
-
-Definition stmt_to_runtime_stmt (s : stmt) (stk : stack): runtime_expr :=
-  Stmt (to_rtstmt s) stk.
+Fixpoint to_rtstmt (stk_id : stack_id) (s : stmt) :=
+match s with
+| Seq s1 s2 => RTSeq (to_rtstmt stk_id s1) (to_rtstmt stk_id s2)
+(* | Return (e : expr) *)
+| IfS e s1 s2 => RTIfS e (to_rtstmt stk_id s1) (to_rtstmt stk_id s2) stk_id
+| Assign v e => RTAssign v e stk_id
+(* | Free (e : expr) *)
+| SkipS => RTSkipS stk_id
+| StuckS => RTStuckS (* stuck statement *)
+(* | ExprS (e : expr) *)
+| Call v proc args => RTCall v proc args stk_id 
+| FldWr e1 fld e2 => RTFldWr e1 fld e2 stk_id
+| FldRd v e fld => RTFldRd v e fld stk_id
+| CAS v e1 fld e2 e3 => RTCAS v e1 fld e2 e3 stk_id
+| Alloc v fs => RTAlloc v fs stk_id
+| Spawn proc args => RTSpawn proc args stk_id
+end
+.
 
 Definition un_op_eval (op : un_op) (v : val) : option val :=
   match op, v with
@@ -299,192 +295,161 @@ Definition bin_op_eval (op : bin_op) (v1 v2 : val) : option val :=
   end.
 
 (* Expression evaluation *)
-Inductive expr_step : expr → state → stack → list Empty_set → runtime_expr → state → list runtime_expr → Prop :=
-| VarStep σ stk x v frame :
-    stk !! 0 = Some frame ->
-    frame.(locals) !! x = Some v ->
-    expr_step (Var x) σ stk [] (expr_to_runtime_expr (Val v) stk) σ []
-| ValStep σ stk v :
-    expr_step (Val v) σ stk [] (expr_to_runtime_expr (Val v) stk) σ []
-| UnOpStep σ stk op v v' :
+Inductive expr_step : expr → stack_frame → expr → Prop :=
+| ExprRefl e stk_frame :
+  expr_step e stk_frame e
+| VarStep stk_frame x v :
+    stk_frame.(locals) !! x = Some v ->
+    expr_step (Var x) stk_frame ((Val v))
+| UnOpStep stk_frame op e v v' :
+    expr_step e stk_frame (Val v) ->
     un_op_eval op v = Some v' ->
-    expr_step (UnOp op (Val v)) σ stk [] (expr_to_runtime_expr (Val v') stk) σ []
-| BinOpStep σ stk op v1 v2 v :
+    expr_step (UnOp op e) stk_frame ((Val v'))
+| BinOpStep stk_frame op e1 e2 v1 v2 v :
+    expr_step e1 stk_frame (Val v1) ->
+    expr_step e2 stk_frame (Val v2) ->
     bin_op_eval op v1 v2 = Some v ->
-    expr_step (BinOp op (Val v1) (Val v2)) σ stk [] (expr_to_runtime_expr (Val v) stk) σ []
-| IfETrueStep σ stk v e1 e2 :
+    expr_step (BinOp op e1 e2) stk_frame ((Val v))
+| IfETrueStep stk_frame v e1 e2 :
     v = (LitBool true) ->
-    expr_step (IfE (Val v) e1 e2) σ stk [] (expr_to_runtime_expr e1 stk) σ []
-| IfEFalseStep σ stk v e1 e2 :
+    expr_step (IfE (Val v) e1 e2) stk_frame (e1)
+| IfEFalseStep stk_frame v e1 e2 :
     v = (LitBool false) ->
-    expr_step (IfE (Val v) e1 e2) σ stk [] (expr_to_runtime_expr e2 stk) σ []
-| StuckStep σ stk:
-    expr_step StuckE σ stk [] (stmt_to_runtime_stmt StuckS stk) σ [].
+    expr_step (IfE (Val v) e1 e2) stk_frame (e2).
 
-(* Statement execution *)
-Inductive stmt_step : stmt → state → stack -> list Empty_set → runtime_expr → state → list runtime_expr → Prop :=
-| ReturnStep σ stk e v s :
-    expr_step e σ stk [] (expr_to_runtime_expr (Val v) stk) σ [] ->
-    match stk with
-    | [] | _ :: [] => s = SkipS
-    | frame :: rest_hd :: rest_tl => s = rest_hd.(curr_stmt)
-    end ->
-    let stk' := match stk with
-    | []  | _ :: [] => []
-    | frame :: rest_hd :: rest_tl => 
-      match frame.(ret_var) with
-      | Some ret_var => update_frame_lvar rest_hd ret_var v :: rest_tl
-      | None => rest_hd :: rest_tl
-      end
-    end in
-    stmt_step (Return e) σ stk [] (stmt_to_runtime_stmt s stk') σ []
-| IfTrueStep σ stk e s1 s2 s :
-    expr_step e σ stk [] (expr_to_runtime_expr (Val (LitBool true)) stk) σ [] ->
-    stmt_step (IfS e s1 s2 s) σ stk [] (stmt_to_runtime_stmt s1 stk) σ []
-| IfFalseStep σ stk e s1 s2 s :
-    expr_step e σ stk [] (expr_to_runtime_expr (Val (LitBool false)) stk) σ [] ->
-    stmt_step (IfS e s1 s2 s) σ stk [] (stmt_to_runtime_stmt s2 stk) σ []
-| AssignStep σ stk var e2 s v :
-    expr_step e2 σ stk [] (expr_to_runtime_expr (Val v) stk) σ [] ->
-    stmt_step (Assign var e2 s) σ stk [] (stmt_to_runtime_stmt s (update_lvar stk var v)) σ []
-| FreeStep σ stk e s l :
-    expr_step e σ stk [] (expr_to_runtime_expr (Val (LitLoc l)) stk) σ [] ->
-    stmt_step (Free e s) σ stk [] (stmt_to_runtime_stmt s stk)
-             {| global_heap := delete l σ.(global_heap);
-                procs := σ.(procs);
-              |} 
-             []
-| SkipStep σ stk :
-    stmt_step SkipS σ stk [] (stmt_to_runtime_stmt SkipS stk) σ []
-| ExprStep σ stk e s v :
-    expr_step e σ stk [] (expr_to_runtime_expr (Val v) stk) σ [] ->
-    stmt_step (ExprS e s) σ stk [] (stmt_to_runtime_stmt SkipS stk) σ []
-| CallStep σ stk opt_ret proc args s procedure :
-    σ.(procs) !! proc = Some procedure ->
-    length procedure.(proc_args) = length args ->
-    
-    let subst_body := subst_stmt procedure.(proc_stmt) (zip (map fst procedure.(proc_args)) args) in
-    let stk' := match stk with
-    | [] => []
-    | frame :: rest => {| locals := frame.(locals);
-                          curr_stmt := s;
-                          ret_var := frame.(ret_var) |} :: rest
-    end in
+Inductive runtime_step : runtime_stmt → state → list Empty_set → runtime_stmt → state → list runtime_stmt → Prop :=
+| RTIfSStep σ stk_id stk_frm e s1 s2 b :
+  σ.(stack) !! stk_id = Some stk_frm ->
+  expr_step e stk_frm (Val (LitBool b)) ->
+  runtime_step (RTIfS e s1 s2 stk_id) σ [] (if b then s1 else s2) σ []
 
-    stmt_step (Call opt_ret proc args s) σ stk []
-              (stmt_to_runtime_stmt subst_body (StackFrame ∅ SkipS opt_ret :: stk')) σ []
-| SpawnStep σ stk proc args s procedure :
-    σ.(procs) !! proc = Some procedure ->
-    let subst_body := subst_stmt procedure.(proc_stmt) (zip (map fst procedure.(proc_args)) args) in
-    let new_stk := [StackFrame ∅ SkipS None] in
-    stmt_step (Spawn proc args  s) σ stk [] (stmt_to_runtime_stmt SkipS stk) σ [stmt_to_runtime_stmt subst_body new_stk]
-| FldWrStep σ stk e1 f e2 s l v :
-    expr_step e1 σ stk [] (expr_to_runtime_expr (Val (LitLoc l)) stk) σ [] ->
-    expr_step e2 σ stk [] (expr_to_runtime_expr (Val v) stk) σ [] ->
-    stmt_step (FldWr e1 f e2 s) σ stk [] (stmt_to_runtime_stmt s stk) (update_heap σ l f v) []
-| FldRdStep σ stk e1 e2 f s l v vr :
-    e1 = (Var vr) ->
-    expr_step e2 σ stk [] (expr_to_runtime_expr (Val (LitLoc l)) stk) σ [] ->
-    lookup_heap σ l f = Some v ->
-    stmt_step (FldRd vr e2 f s) σ stk [] (stmt_to_runtime_stmt s (update_lvar stk vr v)) σ []
-| AllocStep σ stk e fs s vr :
-    e = (Var vr) ->
-    let l := fresh_loc σ.(global_heap) in
-    stmt_step (Alloc e fs s) σ stk [] (stmt_to_runtime_stmt s (update_lvar stk vr (LitLoc l))) 
-    (fold_left (fun acc (f_v : fld_name * val) => update_heap acc l (fst f_v) (snd f_v)) fs σ)
-    []
-| CASSucc σ stk vr e1 f e2 e3 s v2 v3 l:
-    expr_step e1 σ stk [] (expr_to_runtime_expr (Val (LitLoc l)) stk) σ [] ->
-    e2 = (Val v2) ->
-    e3 = (Val v3) ->
-    lookup_heap σ l f = Some v2 ->
-    stmt_step (CAS vr e1 f e2 e3 s) σ stk [] (stmt_to_runtime_stmt s (update_lvar stk vr (LitBool true))) (update_heap σ l f v3) []
-| CASFail σ stk vr e1 f e2 e3 s v1 v2 v3 l:
-    expr_step e1 σ stk [] (expr_to_runtime_expr (Val (LitLoc l)) stk) σ [] ->
-    e2 = (Val v2) ->
-    e3 = (Val v3) ->
-    lookup_heap σ l f = Some v1 ->
-    bool_decide (v1 = v2) = false ->
-    stmt_step (CAS vr e1 f e2 e3 s) σ stk [] (stmt_to_runtime_stmt s (update_lvar stk vr (LitBool false))) σ [].
+| RTAssignStep σ stk_id stk_frm var e v :
+  σ.(stack) !! stk_id = Some stk_frm ->
+  expr_step e stk_frm (Val v) ->
+  let σ' := update_lvar σ var  stk_id v in
+  runtime_step (RTAssign var e stk_id) σ [] (RTVal LitUnit) σ' []
 
-Inductive runtime_step : runtime_expr → state → list Empty_set → runtime_expr → state → list runtime_expr → Prop :=
-| RTExprStep σ e stk v :
-    expr_step e σ stk [] (expr_to_runtime_expr (Val v) stk) σ [] ->
-    runtime_step (Expr e stk) σ [] (Expr (Val v) stk) σ []
-| RTStmtStep σ s stk stk':
-    stmt_step s σ stk [] (Stmt s stk') σ [] ->
-    runtime_step (Stmt s stk) σ [] (Stmt s stk') σ []
-.
+| RTSkipStep σ stk_id :
+  runtime_step (RTSkipS stk_id) σ [] (RTVal LitUnit) σ []
+
+| RTCallStep σ stk_id stk_frm v proc args arg_vals procedure :
+  σ.(stack) !! stk_id = Some stk_frm ->
+  σ.(procs) !! proc = Some procedure ->
+  length procedure.(proc_args) = length args ->
+  Forall2 (fun expr val => expr_step expr stk_frm (Val val)) args arg_vals ->
+  let (new_stk_id, σ') := fresh_stk_id σ in
+  let new_stk_frame := StackFrame 
+      (list_to_map (zip (map fst procedure.(proc_args)) arg_vals))
+    in
+  let σ'' := update_stack σ' new_stk_id new_stk_frame in
+  let new_stmt := to_rtstmt new_stk_id procedure.(proc_stmt) in
+  runtime_step (RTCall v proc args stk_id) σ [] 
+  (RTActiveCall v new_stmt new_stk_id stk_id) σ'' []
+
+| FldWrStep σ stk_id stk_frm e1 fld e2 l v:
+  σ.(stack) !! stk_id = Some stk_frm ->
+  expr_step e1 stk_frm (Val (LitLoc l)) ->
+  expr_step e2 stk_frm (Val v) ->
+  let σ' := update_heap σ l fld v in
+  runtime_step (RTFldWr e1 fld e2 stk_id) σ [] (RTVal LitUnit) σ' []
+
+| FldRdStep σ stk_id stk_frm v e fld l v2 :
+  σ.(stack) !! stk_id = Some stk_frm ->
+  expr_step e stk_frm (Val (LitLoc l)) ->
+  lookup_heap σ l fld = Some v2 ->
+  let σ' := update_lvar σ v stk_id v2 in
+  runtime_step (RTFldRd v e fld stk_id) σ [] (RTVal LitUnit) σ' []
+
+| CASSuccStep σ stk_id stk_frm v e1 fld e2 e3 l v2 v3 :
+  σ.(stack) !! stk_id = Some stk_frm ->
+  expr_step e1 stk_frm (Val (LitLoc l)) ->
+  expr_step e2 stk_frm (Val v2) ->
+  expr_step e3 stk_frm (Val v3) ->
+  lookup_heap σ l fld = Some v2 ->
+  let σ' := update_heap σ l fld v3 in
+  let σ'' := update_lvar σ' v stk_id (LitBool true) in
+  runtime_step (RTCAS v e1 fld e2 e3 stk_id) σ [] (RTVal LitUnit) σ'' []
+
+| CASFailStep σ stk_id stk_frm v e1 fld e2 e3 l v0 v2 v3 :
+  σ.(stack) !! stk_id = Some stk_frm ->expr_step e1 stk_frm (Val (LitLoc l)) ->
+  expr_step e2 stk_frm (Val v2) ->
+  expr_step e3 stk_frm (Val v3) ->
+  lookup_heap σ l fld = Some v0 ->
+  not (v0 = v2) ->
+  let σ' := update_lvar σ v stk_id (LitBool false) in
+  runtime_step (RTCAS v e1 fld e2 e3 stk_id) σ [] (RTVal LitUnit) σ' []
+
+| AllocStep σ stk_id v fs :
+  let l := fresh_loc σ.(global_heap) in
+  let σ' := (fold_left (fun acc (f_v : fld_name * val) => update_heap acc l (fst f_v) (snd f_v)) fs σ) in
+  let σ'' := update_lvar σ v stk_id (LitLoc l) in
+  runtime_step (RTAlloc v fs stk_id) σ [] (RTVal LitUnit) σ'' []
+
+| SpawnStep σ stk_id stk_frm proc args arg_vals procedure :
+  σ.(stack) !! stk_id = Some stk_frm ->
+  σ.(procs) !! proc = Some procedure ->
+  length procedure.(proc_args) = length args ->
+  Forall2 (fun expr val => expr_step expr stk_frm (Val val)) args arg_vals ->
+  let (new_stk_id, σ') := fresh_stk_id σ in
+  let new_stk_frame := StackFrame 
+      (list_to_map (zip (map fst procedure.(proc_args)) arg_vals))
+  in
+  let new_stmt := to_rtstmt new_stk_id procedure.(proc_stmt) in
+  let σ'' := update_stack σ' new_stk_id new_stk_frame in
+  runtime_step (RTSpawn proc args stk_id) σ [] (RTVal LitUnit) σ'' [new_stmt]
+
+| ActiveCallStep σ callee_stk_id caller_stk_id var value callee_stack ret_val:
+  σ.(stack) !! callee_stk_id = Some callee_stack ->
+  callee_stack.(locals) !! "#ret_val" = Some ret_val ->
+  let σ' := update_lvar σ var caller_stk_id ret_val in
+  runtime_step (RTActiveCall var (RTVal value) callee_stk_id caller_stk_id) σ []
+  (RTVal LitUnit) σ' []
+
+  .
 
 End semantics.
 
-Inductive expr_ectx :=
-| UnOpCtx (op : un_op)
-| BinOpLCtx (op : bin_op) (e2 : rtexpr)
-| BinOpRCtx (op : bin_op) (v1 : val)
-| IfECtx (e2 : rtexpr) (e3 : rtexpr)
-.
+Global Instance fill_item_inj Ki : Inj (=) (=) (fill_item Ki).
+Proof. destruct Ki; intros ???; simplify_eq/=; auto with f_equal. Qed.
 
-Definition expr_fill_item (Ki : expr_ectx) (e : rtexpr) : rtexpr :=
-  match Ki with
-  | UnOpCtx op => RTUnOp op e
-  | BinOpLCtx op e2 => RTBinOp op e e2
-  | BinOpRCtx op v1 => RTBinOp op (RTVal v1) e
-  | IfECtx e2 e3 => RTIfE e e2 e3
-  end.
+Lemma fill_item_val Ki e :
+  is_Some (to_val (fill_item Ki e)) → is_Some (to_val e).
+Proof. intros [v ?]. destruct Ki; simplify_option_eq; eauto. Qed.
 
-Inductive stmt_ectx :=
-| ReturnCtx
-| IfSCtx (s1 s2 s : stmt)
-| AssignCtx (v : var) (s : stmt)
-| FreeCtx (s : stmt)
-| ExprSCtx (s : stmt)
-| FldWrLCtx (f : fld_name) (v : val) (s : stmt)
-| FldWrRCtx (e : rtexpr) (f : fld_name) (s : stmt)
-| FldRdCtx (v : var) (e : rtexpr) (f : fld_name) (s : stmt)
-| CASLCtx (v : var) (e1 : rtexpr) (fld : fld_name) (e2 : rtexpr) (s : stmt)
-| CASMCtx (v : var) (e1 : rtexpr) (fld : fld_name) (v3 : val) (s : stmt)
-| CASRCtx (v : var) (fld : fld_name) (v2 : val) (v3 : val) (s : stmt)
-| AllocCtx (fs : list (fld_name * val)) (s : stmt)
-| SpawnCtx (proc : proc_name) (args : list rtexpr) (s : stmt)
-.
+Lemma val_base_stuck e1 σ1 κ e2 σ2 efs : runtime_step e1 σ1 κ e2 σ2 efs → to_val e1 = None.
+Proof. destruct 1; naive_solver. Qed.
 
-Definition stmt_fill_item (Ki : stmt_ectx) (e : rtexpr) : rtstmt :=
-  match Ki with
-  | ReturnCtx => RTReturn e
-  | IfSCtx s1 s2 s => RTIfS e s1 s2 s
-  | AssignCtx v s => RTAssign v e s
-  | FreeCtx s => RTFree e s
-  | ExprSCtx s => RTExprS e s
-  | FldWrLCtx f v s => RTFldWr (Val v) f e s
-  | FldWrRCtx e1 f s => RTFldWr e1 f e s
-  | FldRdCtx v e1 f s => RTFldRd v e1 f s
-  | CASLCtx v e1 f e2 s => RTCAS v e1 f e2 e s
-  | CASMCtx v e1 f v3 s => RTCAS v e1 f (Val v3) e s
-  | CASRCtx v f v2 v3 s => RTCAS v (Val v2) f (Val v3) e s
-  | AllocCtx fs s => RTAlloc e fs s
-  | SpawnCtx proc args s => RTSpawn proc args s
-  end.
+Lemma base_ctx_step_val Ki e σ1 κ e2 σ2 efs :
+  runtime_step (fill_item Ki e) σ1 κ e2 σ2 efs → is_Some (to_val e).
+Proof. destruct Ki; inversion_clear 1; simplify_option_eq; eauto. Qed.
 
+Lemma fill_item_no_val_inj Ki1 Ki2 e1 e2 :
+  to_val e1 = None → to_val e2 = None →
+  fill_item Ki1 e1 = fill_item Ki2 e2 → Ki1 = Ki2.
+Proof. destruct Ki1, Ki2; naive_solver eauto with f_equal. Qed.
 
-Inductive runtime_ectx :=
-| ExprCtx (e : expr_ectx)
-| StmtCtx (s : stmt_ectx)
-.
-
-Definition runtime_ectx_fill_item (Ki : runtime_ectx) (e : runtime_expr) : runtime_expr :=
-  match Ki, e with
-  | ExprCtx E, Expr e stk => Expr (expr_fill_item E e) stk
-  | StmtCtx s, Expr e stk => Stmt (stmt_fill_item s e) stk
-  | _, _ => e
-  end.
-
-Global Instance fill_item_inj Ki : Inj (=) (=) (runtime_ectx_fill_item Ki).
-Proof. destruct Ki as [E|E]; destruct E; intros x y ?; simplify_eq/=; auto with f_equal; destruct x; destruct y; simplify_eq/=; auto with f_equal.
--
-
+Lemma simp_lang_mixin : EctxiLanguageMixin of_val to_val fill_item runtime_step.
+Proof.
+  split; apply _ || eauto using to_of_val, of_to_val, val_base_stuck,
+    fill_item_val, fill_item_no_val_inj, base_ctx_step_val.
 Qed.
 
+Canonical Structure simp_ectxi_lang := EctxiLanguage simp_lang_mixin.
+Canonical Structure simp_ectx_lang := EctxLanguageOfEctxi simp_ectxi_lang.
+Canonical Structure simp_lang := LanguageOfEctx simp_ectx_lang.
 
+Check (@step simp_lang).
+
+Eval compute in cfg simp_lang.
+
+Canonical Structure valO := leibnizO val.
+Canonical Structure stack_frameO := leibnizO stack_frame.
+
+Lemma expr_step_val_unique e stk_frm v v0:
+  expr_step e stk_frm (Val v) ->
+  expr_step e stk_frm (Val v0) ->
+  v = v0.
+Proof. 
+  Admitted.
 
 
