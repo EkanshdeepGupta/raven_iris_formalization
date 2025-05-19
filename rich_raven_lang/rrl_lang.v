@@ -6,11 +6,12 @@ Require Import Eqdep_dec.
 From stdpp Require Export strings.
 From stdpp Require Import gmap list sets.
 From iris.algebra Require Import cmra.
-From iris.heap_lang Require Import lang.
-From iris.heap_lang Require Import locations.
+(* From iris.heap_lang Require Import lang. *)
+(* From iris.heap_lang Require Import locations. *)
 From stdpp Require Export namespaces.
 From iris.base_logic.lib Require Export own.
 From iris.base_logic.lib Require Import ghost_map.
+From iris.base_logic.lib Require Import invariants.
 (* From iris.prelude Require Import options. *)
 (* From iris.algebra Require Import reservation_map agree frac. *)
 (* From iris.algebra Require Export dfrac. *)
@@ -19,19 +20,22 @@ From iris.base_logic.lib Require Import ghost_map.
 
 From iris.proofmode Require Import tactics.
 From iris.program_logic Require Export weakestpre.
-From iris.heap_lang Require Export lang.
-From iris.heap_lang Require Import proofmode notation.
+(* From iris.heap_lang Require Export lang. *)
+(* From iris.heap_lang Require Import proofmode notation. *)
 
-Context `{!heapGS Σ}.
+From simp_raven_lang Require Export lang lifting ghost_state.
 
-Inductive bin_op : Set :=
+Context `{!simpLangG Σ}.
+(* Context `{!invGS Σ}. *)
+
+(* Inductive bin_op : Set :=
 | AddOp | SubOp | MulOp | DivOp | ModOp 
 | EqOp | NeOp | LtOp
 | GtOp | LeOp | GeOp
 | AndOp | OrOp.
 
 Inductive un_op : Set :=
-| NotBoolOp | NegOp.
+| NotBoolOp | NegOp. *)
 
 Definition var := string.
 
@@ -169,7 +173,7 @@ Inductive stmt :=
 (* | Free (e : RavenExpr) *)
 | SkipS
 | StuckS (* stuck statement *)
-| ExprS (e : RavenExpr)
+(* | ExprS (e : RavenExpr) *)
 | Call (v : option var) (proc : proc_name) (args : list RavenExpr)
 | FldWr (e1 : RavenExpr) (fld : fld_name) (e2 : RavenExpr)
 | FldRd (v : var) (e : RavenExpr) (fld : fld_name)
@@ -192,7 +196,7 @@ Inductive assertion (expr: Type) :=
 | EImpl (cond : expr) (body : assertion expr)
 | EInv (inv_name : inv_name) (args : list expr)
 | EPred (pred_name : pred_name) (args : list expr)
-| EAnd (assert1 : (assertion expr)) (assert2 : (assertion expr))
+| EAnd (assert1 : assertion expr) (assert2 : assertion expr)
 .
 
 Definition r_assertion := assertion RavenExpr.
@@ -276,9 +280,9 @@ Inductive stmt_well_defined : stmt -> Prop :=
     stmt_well_defined (Free e) *)
 | SkipSTp : stmt_well_defined (SkipS)
 | StuckSTp : stmt_well_defined (StuckS)
-| ExprSTp e: 
+(* | ExprSTp e: 
     expr_well_defined e -> 
-    stmt_well_defined (ExprS e)
+    stmt_well_defined (ExprS e) *)
 | CallTp v proc args: 
     proc ∈ proc_set -> 
     (Forall (fun arg => expr_well_defined arg) args) ->
@@ -351,36 +355,58 @@ End AtomicAnnotations.
 Section Translation.
   (* Have to include all the resource algebras  *)
 
-    Definition trnsl_val (v: val) : heap_lang.val :=
+    Definition trnsl_val (v: val) : option lang.val :=
     match v with
-    | LitBool b => LitV (heap_lang.LitBool b)
-    | LitInt i => LitV (heap_lang.LitInt i)
-    | LitUnit => LitV (heap_lang.LitUnit)
-    | LitLoc l => LitV (heap_lang.LitLoc (heap_lang.locations.Loc l.(loc_car)))
-    | LitRAElem RA val => LitV (heap_lang.LitBool true)
+    | LitBool b => Some (lang.LitBool b) 
+    | LitInt i => Some (lang.LitInt i)
+    | LitUnit => Some (lang.LitUnit)
+    | LitLoc l => Some (lang.LitLoc (lang.Loc l.(loc_car)))
+    | LitRAElem _ _ => None
     end.
 
-    Definition trnsl_expressions (e: LExpr) : heap_lang.expr := match e with
-    | LVar x => (heap_lang.Var x)
+    Fixpoint trnsl_expressions (e: LExpr) : option lang.expr := match e with
+    | LVar x => Some (lang.Var x)
     | LVal v =>
-        heap_lang.Val (trnsl_val v)
-    | LUnOp op e => heap_lang.Val (LitV (heap_lang.LitBool true))
-    | LBinOp op e1 e2 => heap_lang.Val (LitV (heap_lang.LitBool true))
+        match trnsl_val v with
+        | None => None
+        | Some v => Some (lang.Val v)
+        end
+    | LUnOp op e => 
+        match (trnsl_expressions e) with
+        | None => None
+        | Some e => Some (lang.UnOp op e)
+        end
+
+    
+    | LBinOp op e1 e2 => 
+      match (trnsl_expressions e1), (trnsl_expressions e2) with
+      | Some e1, Some e2 => Some (lang.BinOp op e1 e2)
+      | _, _ => None
+      end
     end.
+
+    Global Parameter trnsl_pred : pred_name -> list LExpr -> iProp Σ.
+    Global Parameter trnsl_inv : inv_name -> list LExpr -> iProp Σ.
+
 
     Fixpoint trnsl_assertions (a : l_assertion) : iProp Σ := match a with
-    | EExpr _ l_expr => ⌜(trnsl_expressions l_expr) = #true⌝
+    | EExpr _ l_expr => ⌜(trnsl_expressions l_expr) = Some (lang.Val (lang.LitBool true))⌝
     | EPure _ p => ⌜ p ⌝
-    | EOwn _ l_expr fld (LitRAElem RA ra_elem) => 
-      (* True *)
-      ∃ l: locations.loc, ⌜(trnsl_expressions l_expr) = heap_lang.Val (LitV (heap_lang.LitLoc l))⌝ ∗ l ↦ #0
+    | EOwn _ l_expr fld chunk => 
+      match trnsl_val chunk with
+      | Some chunk =>
+        ∃ l: lang.loc, ⌜(trnsl_expressions l_expr) = Some (lang.Val ((lang.LitLoc l)))⌝ ∗ 
+        (l#fld ↦{ 1 } lang.LitInt 0)
+        (* (heap_maps_to l fld 1 chunk) *)
+      | None => True
+      end
     | EForall _ v body => 
-      ∀ v':heap_lang.val, (trnsl_assertions (body))
+      ∀ v':lang.val, (trnsl_assertions (body))
       (* ∀ vs, (trnsl_assertions body) *)
       (* True *)
-    | EExists _ v body => ∃ v': heap_lang.val, (trnsl_assertions body)
+    | EExists _ v body => ∃ v': lang.val, (trnsl_assertions body)
     | EImpl _ cnd body => 
-      ⌜((trnsl_expressions cnd) = #true)⌝ -∗ (trnsl_assertions body)
+      ⌜((trnsl_expressions cnd) = Some (lang.Val (lang.LitBool true)))⌝ -∗ (trnsl_assertions body)
       (* True *)
     | EInv _ inv args => 
       match inv_map !! inv with
@@ -388,16 +414,45 @@ Section Translation.
         let subst_map := list_to_map (zip inv_record.(inv_args) args) in
         let subst_body := subst inv_record.(inv_body) subst_map in
 
-        (* (invariants.inv (inv_namespace_map inv) (trnsl_assertions subst_body)) *)
+        (invariants.inv (inv_namespace_map inv) (trnsl_inv inv args))
 
-        False
+        (* False *)
       | None => False
       end
       (* False *)
-    | EPred _ pred args => True
+    | EPred _ pred args => trnsl_pred pred args
     | EAnd _ a1 a2 => (trnsl_assertions a1) ∗ (trnsl_assertions a2)
-    |_ => True
-    end.
+    end
+    (* with
+    trnsl_pred pred args : iProp Σ :=
+      match pred_map !! pred with
+      | Some pred_rec =>
+        let subst_map := list_to_map (zip pred_rec.(pred_args) args) in
+
+        trnsl_assertions (subst pred_rec.(pred_body) subst_map)
+      | None => True
+      end *)
+    .
+
+  Axiom trnsl_pred_validity : forall (pred : pred_name) (args : list LExpr), 
+    match pred_map !! pred with
+    | Some pred_rec => 
+      let subst_map := list_to_map (zip pred_rec.(pred_args) args) in
+
+      trnsl_assertions (subst pred_rec.(pred_body) subst_map) = (trnsl_pred pred args)
+    | None => true
+    end
+  .
+
+  Axiom trnsl_inv_validity : forall (inv : inv_name) (args : list LExpr), 
+    match inv_map !! inv with
+    | Some inv_rec => 
+      let subst_map := list_to_map (zip inv_rec.(inv_args) args) in
+
+      trnsl_assertions (subst inv_rec.(inv_body) subst_map) = (trnsl_inv inv args)
+    | None => true
+    end
+  .
 
   Definition entails P Q := trnsl_assertions P ⊢ trnsl_assertions Q.
 
@@ -427,32 +482,50 @@ Section Translation.
     end *)
   end.
 
-  Fixpoint trnsl_stmt (s : stmt) stk : option heap_lang.expr := match s with
+  Fixpoint trnsl_stmt (s : stmt) stk : option lang.stmt := match s with
   | Seq s1 s2 => 
     match trnsl_stmt s1 stk, trnsl_stmt s2 stk with
     | None, None => None
     | Some s1, None => Some s1
     | None, Some s2 => Some s2
-    | Some s1', Some s2' => Some (Lam BAnon s2' s1' )
+    | Some s1', Some s2' => Some (stmt_append s1' s2' )
     end
+  (* | Return e => match trnsl_ravenExpr_lExpr stk e with
+    | Some lexpr =>
+      match trnsl_expressions lexpr with
+        | None => None
+        | Some e => Some (lang.Return e)
+      end
+    | None => None
+    end *)
+
   | IfS e s1 s2 => match (trnsl_ravenExpr_lExpr stk e) with
     | Some lexpr => 
-      match (trnsl_stmt s1 stk), (trnsl_stmt s2 stk) with
-      | None, None => None
-      | Some s1, None => Some (heap_lang.If (trnsl_expressions lexpr) s1 Skip)
-      | None, Some s2 => Some (heap_lang.If (trnsl_expressions lexpr) Skip s2)
-      | Some s1, Some s2 => Some (heap_lang.If (trnsl_expressions lexpr) s1 s2) 
+      match (trnsl_expressions lexpr), (trnsl_stmt s1 stk), (trnsl_stmt s2 stk) with
+      | None, _, _ => None
+      | Some e', None, None => None
+      | Some e', Some s1, None => Some (lang.IfS e' s1 lang.SkipS)
+      | Some e', None, Some s2 => Some (lang.IfS e' lang.SkipS s2 )
+      | Some e', Some s1, Some s2 => Some (lang.IfS e' s1 s2) 
       end
     | None => None
     end
-  | Assign v e => None
-  | SkipS => Some (Skip)
-  | StuckS => None
-  | ExprS e => 
+  | Assign v e => 
+    match trnsl_ravenExpr_lExpr stk e with
+    | Some lexpr =>
+      match (trnsl_expressions lexpr) with
+      | Some e => Some (lang.Assign v e)
+      | None => None
+      end
+    | None => None
+    end
+  | SkipS => Some (lang.SkipS)
+  | StuckS => Some lang.StuckS
+  (* | ExprS e => 
     match (trnsl_ravenExpr_lExpr stk e) with
     | Some lexpr => Some (trnsl_expressions lexpr)
     | None => None
-    end
+    end *)
   | Call v proc args => None
   | FldWr e1 fld e2 => None
   | FldRd v e1 fld => None
@@ -465,7 +538,6 @@ Section Translation.
   | UnfoldInv inv args => None
   | FoldInv inv args => None
   | Fpu e fld old_val new_val => None
-  (* | _ => (None) *)
   end.
 
 End Translation.
