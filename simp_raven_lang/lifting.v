@@ -45,31 +45,34 @@ Section lifting.
     - unfold base_reducible. 
       iExists [], (RTVal LitUnit), (update_heap σ l f v), [].
       iPureIntro.
-      apply (FldWrStep σ stk_id stk_frm _ f e l v).
-      + done. (* given by stack_interp_agreement *) 
-      + apply ExprRefl.
-      + done.
+      apply (FldWrStep σ stk_id stk_frm _ f e l v); try done.
+      apply ExprRefl.
 
     - iNext. iIntros (e2 σ2 efs) "%H Hcred".
-      inversion H; simpl; iFrame.
+      inversion H as [  |  |  |  
+        | σ0 stk_id0 stk_frm0 e1 fld e0 l0 v0 Hstk_frm0  Hl0 Hv0 
+      |  |  |  |  |  |  ]; subst κ efs σ2 σ0 fld stk_id0 e0 e1 e2; simpl; iFrame.
+      
+      assert (l = l0) as Hlsubst. 
+        { inversion Hl0; done. } subst l0.
+      assert (stk_frm0 = stk_frm) as Hstkfrm_subst. { 
+          rewrite HstkPure in Hstk_frm0.  
+          injection Hstk_frm0 as Hstk_frm0; try done.
+      } subst stk_frm0. 
+      assert (v = v0) as Hvsubst. 
+        { apply (expr_step_val_unique _ _ _ _ He Hv0). } subst v0.
+      
       iCombine "Hhp Hl" as "Hcomb".
       iSplitR; first done.
-      iPoseProof (own_update heap_heap_name _ _ (heap_update _ _ _ _ v0) with "Hcomb") as "Hcomb2".
-      iMod "Hcomb2" as "Hcomb2'".
-      iDestruct "Hcomb2'" as "[Hauth Hfrag]".
+      iPoseProof (own_update heap_heap_name _ _ (heap_update _ _ _ _ v) with "Hcomb") as "Hcomb".
+      iMod "Hcomb" as "Hcomb".
+      iDestruct "Hcomb" as "[Hauth Hfrag]".
       iModIntro.
       iSplitL "Hauth".
-      + assert (l = l0). { inversion H10. done. }
-        rewrite H12; by iFrame.
+      + by iFrame.
         (* unfold update_heap in σ'. *)
     
-      + iApply "HΦ".
-        assert (v = v0). {
-          rewrite HstkPure in H9.  injection H9 as H9. 
-          rewrite H9 in He.
-          apply (expr_step_val_unique _ _ _ _ He H11).
-        }
-        rewrite H12. iFrame.
+      + iApply "HΦ". iFrame.
   Qed.
 
   (* Lemma wp_assign stk_id v e  z:

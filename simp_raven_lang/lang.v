@@ -438,9 +438,9 @@ Canonical Structure simp_ectxi_lang := EctxiLanguage simp_lang_mixin.
 Canonical Structure simp_ectx_lang := EctxLanguageOfEctxi simp_ectxi_lang.
 Canonical Structure simp_lang := LanguageOfEctx simp_ectx_lang.
 
-Check (@step simp_lang).
+(* Check (@step simp_lang).
 
-Eval compute in cfg simp_lang.
+Eval compute in cfg simp_lang. *)
 
 Canonical Structure valO := leibnizO val.
 Canonical Structure stack_frameO := leibnizO stack_frame.

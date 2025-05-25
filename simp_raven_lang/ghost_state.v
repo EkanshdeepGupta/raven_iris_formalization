@@ -39,7 +39,7 @@ Definition heapUR : ucmra :=
   gmapUR heap_addr heap_cellR.
 
 Definition stackUR :=
-  gmapUR stack_id (exclR stack_frameO).
+  gmapUR stack_id (exclR stack_frame).
 
 Class heapG Σ := HeapG {
   heap_heap_inG :: inG Σ (authR heapUR);
@@ -105,19 +105,16 @@ Section definitions.
   Definition stack_frame_own (stk_id : stack_id) (stk_frm : stack_frame)  := 
     own heap_stack_name (◯ (to_stackR ({[stk_id := stk_frm]} ))).
 
-
-
   Lemma heap_update σ l f x v0: 
     (● ((λ v1 : lang.val, to_heap_cellR v1) <$> global_heap σ)
     ⋅ ◯ {[heap_addr_constr l f := (1%Qp, to_agree x)]}) ~~> 
     
     (● ((λ v1 : lang.val, to_heap_cellR v1) <$> <[heap_addr_constr l f:=v0]> (global_heap σ))
     ⋅ ◯ {[heap_addr_constr l f := (1%Qp, to_agree v0)]}).
-  Proof. 
+  Proof.
   Admitted.
   
   Lemma stack_interp_agreement σ stk_id stk_frm : (stack_interp (stack σ)) -∗ stack_frame_own stk_id stk_frm -∗ ⌜stack σ !! stk_id = Some stk_frm⌝.
-  
   Proof. 
     iIntros "Hstack Hstk".
     unfold stack_interp.
@@ -126,15 +123,24 @@ Section definitions.
     iPoseProof (own_valid with "HstackV") as "%Hi".
     apply auth_both_valid_discrete in Hi.
     destruct Hi as [Hi1 Hi2].
-    Check gmap.lookup_included.
+    (* iPureIntro. *)
+     (* gmap.lookup_included in Hi1. *)
+    (* Check gmap.lookup_included. *)
     rewrite -> (gmap.lookup_included (to_stackR {[stk_id := stk_frm]}) (to_stackR (stack σ))) in Hi1.
     specialize (Hi1 stk_id).
     iPureIntro.
 
-    Locate map_lookup.
-    unfold to_stackR in Hi1. rewrite !lookup_fmap in Hi1. rewrite lookup_insert in Hi1. cbn in Hi1.
-  Admitted.
+    (* Locate map_lookup. *)
+    (* unfold to_stackR in Hi1. *)
+    rewrite !lookup_fmap in Hi1. cbn in Hi1. rewrite lookup_insert in Hi1. cbn in Hi1.
+    destruct (stack σ !! stk_id); try done.
+    -  cbn in Hi1. rewrite Excl_included in Hi1. 
+    apply leibniz_equiv in Hi1. by subst s.
 
+    - cbn in Hi1. exfalso. rewrite option_included in Hi1.
+    destruct Hi1; try done.
+    destruct H as [a [b [H1 [H2 H3]]]]. try done.
+  Qed.
 End definitions.
 
 Notation " l # f  ↦{ q } v" := (heap_maps_to l f q v)
