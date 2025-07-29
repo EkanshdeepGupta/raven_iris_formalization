@@ -4,7 +4,7 @@ From iris.program_logic Require Import ectx_lifting.
 (* From iris_simp_lang Require Import notation tactics class_instances. *)
 (* From iris_simp_lang Require Import heap_lib. *)
 From iris Require Import options.
-From simp_raven_lang Require Import ghost_state.
+From raven_iris.simp_raven_lang Require Import ghost_state.
 From stdpp Require Import gmap.
 Import uPred.
 Import weakestpre.
@@ -24,6 +24,13 @@ Global Instance simpLang_irisG `{!simpLangG Σ} : irisGS simp_lang Σ := {
   state_interp_mono _ _ _ _ := fupd_intro _ _;
 }.
 
+(* Class simpGS Σ := {
+  simp_inG :> inG Σ _;
+  simp_langG :> simpLangG Σ;
+  (* This line provides the wp instance: *)
+  simp_irisGS :> irisGS simp_lang Σ
+}. *)
+
 Section lifting.
   (* Open Scope expr_scope. *)
   (* Open Scope bi_scope. *)
@@ -34,7 +41,8 @@ Section lifting.
   Lemma wp_heap_wr stk_id stk_frm e v l f x:
     {{{ stack_own[ stk_id, stk_frm] ∗ l#f ↦{1%Qp} x ∗ ⌜expr_step e stk_frm (Val v)⌝}}}
       (RTFldWr (Val (LitLoc l)) f e stk_id)
-    {{{RET LitUnit; l#f ↦{1%Qp} v}}}.
+    {{{RET LitUnit; stack_own[ stk_id, stk_frm] ∗ l#f ↦{1%Qp} v}}}.
+    (* Unset Printing Notations. *)
   Proof.
     iIntros (Φ) "[Hstk [Hl %He]] HΦ" .
     iApply wp_lift_atomic_base_step_no_fork; first done.
@@ -47,6 +55,7 @@ Section lifting.
       iPureIntro.
       apply (FldWrStep σ stk_id stk_frm _ f e l v); try done.
       apply ExprRefl.
+      
 
     - iNext. iIntros (e2 σ2 efs) "%H Hcred".
       inversion H as [  |  |  |  
@@ -75,15 +84,56 @@ Section lifting.
       + iApply "HΦ". iFrame.
   Qed.
 
-  (* Lemma wp_assign stk_id v e  z:
-  {{{ True}}}
-    (Stmt (Assign v e Term) stk_id)
-  {{{ RET z; True}}}.
 
-  Lemma wp_assign s E stk_id frm frm' v e v' z:
-  {{{ stack_frame_own stk_id frm}}}
-    Stmt (Assign v e Term) stk_id @ s; E
-  {{{ RET z; (stack_frame_own stk_id frm')}}}. *)
+  (* Lemma wp_assign: similar to wp_heap_wr for the Assign statement *)
+
+  Lemma wp_assign stk_id stk_frm v v' e:
+    {{{ stack_own[ stk_id, stk_frm] ∗ ⌜expr_step e stk_frm (Val v')⌝}}}
+      (RTAssign v e stk_id)
+    {{{ RET LitUnit; stack_own[ stk_id, StackFrame (<[v:=v']>stk_frm.(locals)) ] }}}.
+  Proof.
+    iIntros (Φ) "[Hstk %He] HΦ".
+    iApply wp_lift_atomic_base_step_no_fork; first done.
+    iIntros (σ ns κ κs nt) "Hstate".
+    iDestruct "Hstate" as "[Hhp [Hproc Hstack]]".
+    iPoseProof (stack_interp_agreement with "Hstack Hstk") as "%HstkPure".
+    iModIntro. iSplitR.
+    - unfold base_reducible.
+      iExists [], (RTVal LitUnit), (update_lvar σ v stk_id v'), [].
+      iPureIntro.
+      apply (RTAssignStep σ stk_id stk_frm v e v'); try done.
+
+    - iNext. iIntros (e2 σ2 efs) "%H Hcred".
+      inversion H as [  | 
+        σ0 stk_id0 stk_frm0 e1 v0 e0 Hstk_frm0 Hv0 
+      |  |  |  |  |  |  |  |  |  ]; subst κ efs σ2 σ0 v0 e1 e2; simpl. 
+      (* iFrame. *)
+
+      assert (stk_frm0 = stk_frm) as Hstkfrm_subst. { 
+          rewrite HstkPure in Hstk_frm0.  
+          injection Hstk_frm0 as Hstk_frm0; try done.
+      } subst stk_frm0. 
+      assert (v' = e0) as Hvsubst. 
+        { apply (expr_step_val_unique _ _ _ _ He Hv0). } subst v'.
+      
+      iCombine "Hstack" "Hstk" as "Hcomb".
+      iSplitR; first done.
+      iPoseProof (own_update heap_stack_name 
+          (● to_stackR (stack σ) ⋅ ◯ to_stackR {[stk_id := stk_frm]})
+          (● to_stackR (stack σ') ⋅ ◯ to_stackR {[stk_id := {| locals := <[v:=e0]> (locals stk_frm) |}]})
+
+           with "Hcomb"
+      ) 
+          as "Hcomb2".
+      { admit. }
+      iMod "Hcomb2" as "Hcomb".
+      iDestruct "Hcomb" as "[Hauth Hfrag]".
+      iModIntro. iFrame.
+      (* iSplitL "Hauth".
+      + by iFrame. *)
+
+      + iApply "HΦ". by iFrame.
+  Admitted.
 
 End lifting.
 

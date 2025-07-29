@@ -6,7 +6,7 @@ From iris.bi Require Import fractional.
 From iris.base_logic Require Export lib.own.
 From iris.base_logic.lib Require Import ghost_map.
 From iris.proofmode Require Export tactics.
-From simp_raven_lang Require Export lang.
+From raven_iris.simp_raven_lang Require Export lang.
 
 From iris.base_logic Require Import iprop.
 From iris.proofmode Require Import proofmode.

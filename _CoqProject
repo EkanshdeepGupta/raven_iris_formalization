@@ -1,6 +1,7 @@
 -arg -w -arg -redundant-canonical-projection
 
--Q simp_raven_lang simp_raven_lang
+-Q simp_raven_lang raven_iris.simp_raven_lang
+-Q rich_raven_lang raven_iris.rich_raven_lang
 
 simp_raven_lang/lang.v
 # simp_raven_lang/direct_lang.v
@@ -8,3 +9,4 @@ simp_raven_lang/ghost_state.v
 simp_raven_lang/lifting.v
 
 rich_raven_lang/rrl_lang.v
+rich_raven_lang/trnsl.v

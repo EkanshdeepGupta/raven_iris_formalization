@@ -1,41 +1,26 @@
 From stdpp Require Export binders strings.
-From stdpp Require Import gmap.
 From stdpp Require Import countable.
 Require Import Eqdep_dec.
-
-From stdpp Require Export strings.
 From stdpp Require Import gmap list sets.
-From iris.algebra Require Import cmra.
-(* From iris.heap_lang Require Import lang. *)
-(* From iris.heap_lang Require Import locations. *)
 From stdpp Require Export namespaces.
+
+From iris Require Import options.
+From iris.algebra Require Import cmra.
 From iris.base_logic.lib Require Export own.
 From iris.base_logic.lib Require Import ghost_map.
 From iris.base_logic.lib Require Import invariants.
-(* From iris.prelude Require Import options. *)
-(* From iris.algebra Require Import reservation_map agree frac. *)
-(* From iris.algebra Require Export dfrac. *)
-(* From iris.bi.lib Require Import fractional. *)
-(* From iris.proofmode Require Import proofmode. *)
 
-From iris.proofmode Require Import tactics.
+
 From iris.program_logic Require Export weakestpre.
-(* From iris.heap_lang Require Export lang. *)
-(* From iris.heap_lang Require Import proofmode notation. *)
+From iris.program_logic Require Import ectx_lifting.
+From iris.proofmode Require Import tactics.
 
-From simp_raven_lang Require Export lang lifting ghost_state.
+From raven_iris.simp_raven_lang Require Export lang lifting ghost_state.
+From raven_iris.simp_raven_lang Require Import ghost_state.
+
+From Coq.Program Require Import Wf.
 
 Context `{!simpLangG Σ}.
-(* Context `{!invGS Σ}. *)
-
-(* Inductive bin_op : Set :=
-| AddOp | SubOp | MulOp | DivOp | ModOp 
-| EqOp | NeOp | LtOp
-| GtOp | LeOp | GeOp
-| AndOp | OrOp.
-
-Inductive un_op : Set :=
-| NotBoolOp | NegOp. *)
 
 Definition var := string.
 
@@ -174,7 +159,7 @@ Inductive stmt :=
 | SkipS
 | StuckS (* stuck statement *)
 (* | ExprS (e : RavenExpr) *)
-| Call (v : option var) (proc : proc_name) (args : list RavenExpr)
+| Call (v : var) (proc : proc_name) (args : list RavenExpr)
 | FldWr (e1 : RavenExpr) (fld : fld_name) (e2 : RavenExpr)
 | FldRd (v : var) (e : RavenExpr) (fld : fld_name)
 | CAS (v : var) (e1 : RavenExpr) (fld : fld_name) (e2 : RavenExpr) (e3 : RavenExpr)
@@ -339,8 +324,8 @@ Section AtomicAnnotations.
 
   Inductive AtomicStep : Type :=
   | Closed
-  | Opened (S : gset (inv_name * list LExpr))
-  | Stepped (S : gset (inv_name * list LExpr))
+  | Opened (S : list (inv_name * list LExpr))
+  | Stepped (S : list (inv_name * list LExpr))
   .
 
   Definition AtomicAnnotation : Type := (gset inv_name * AtomicStep).
@@ -365,7 +350,9 @@ Section Translation.
     end.
 
     Fixpoint trnsl_expressions (e: LExpr) : option lang.expr := match e with
-    | LVar x => Some (lang.Var x)
+    | LVar x => 
+      (* What should LVar translate to? *)  
+      Some (lang.Var x)
     | LVal v =>
         match trnsl_val v with
         | None => None
@@ -389,24 +376,47 @@ Section Translation.
     Global Parameter trnsl_inv : inv_name -> list LExpr -> iProp Σ.
 
 
-    Fixpoint trnsl_assertions (a : l_assertion) : iProp Σ := match a with
-    | EExpr _ l_expr => ⌜(trnsl_expressions l_expr) = Some (lang.Val (lang.LitBool true))⌝
-    | EPure _ p => ⌜ p ⌝
+    Fixpoint trnsl_assertions (a : l_assertion) : option (iProp Σ) := match a with
+    | EExpr _ l_expr => 
+      match trnsl_expressions l_expr with
+      | None => None
+      | Some e => Some (⌜e = (lang.Val (lang.LitBool true))⌝%I)
+      (* Some (⌜(e = (lang.Val (lang.LitBool true)))⌝) *)
+      end
+    
+    (* ⌜(trnsl_expressions l_expr) = Some (lang.Val (lang.LitBool true))⌝ *)
+    | EPure _ p => Some (⌜ p ⌝%I)
     | EOwn _ l_expr fld chunk => 
       match trnsl_val chunk with
       | Some chunk =>
-        ∃ l: lang.loc, ⌜(trnsl_expressions l_expr) = Some (lang.Val ((lang.LitLoc l)))⌝ ∗ 
-        (l#fld ↦{ 1 } lang.LitInt 0)
+        Some (∃ l: lang.loc, (
+          ⌜(trnsl_expressions l_expr) = Some (lang.Val ((lang.LitLoc l)))⌝ ∗ 
+          (l#fld ↦{ 1 } lang.LitInt 0)
+        )%I)%I
         (* (heap_maps_to l fld 1 chunk) *)
-      | None => True
+      | None => None
       end
     | EForall _ v body => 
-      ∀ v':lang.val, (trnsl_assertions (body))
+      match trnsl_assertions body with
+      | None => None
+      | Some body_expr => Some (∀ v':lang.val, body_expr)%I
+      end
+      (* ∀ v':lang.val, (trnsl_assertions (body)) *)
       (* ∀ vs, (trnsl_assertions body) *)
       (* True *)
-    | EExists _ v body => ∃ v': lang.val, (trnsl_assertions body)
+    | EExists _ v body => 
+      match trnsl_assertions body with
+      | None => None
+      | Some body_expr => Some (∃ v': lang.val, body_expr)%I
+      end
+    
     | EImpl _ cnd body => 
-      ⌜((trnsl_expressions cnd) = Some (lang.Val (lang.LitBool true)))⌝ -∗ (trnsl_assertions body)
+      match (trnsl_expressions cnd), (trnsl_assertions body) with
+      | None, _ => None
+      | _, None => None
+      | Some e, Some body_expr => 
+      Some (⌜e = lang.Val (lang.LitBool true)⌝ -∗ body_expr)%I
+      end
       (* True *)
     | EInv _ inv args => 
       match inv_map !! inv with
@@ -414,24 +424,20 @@ Section Translation.
         let subst_map := list_to_map (zip inv_record.(inv_args) args) in
         let subst_body := subst inv_record.(inv_body) subst_map in
 
-        (invariants.inv (inv_namespace_map inv) (trnsl_inv inv args))
+        Some (invariants.inv (inv_namespace_map inv) (trnsl_inv inv args))
 
         (* False *)
-      | None => False
+      | None => None
       end
       (* False *)
-    | EPred _ pred args => trnsl_pred pred args
-    | EAnd _ a1 a2 => (trnsl_assertions a1) ∗ (trnsl_assertions a2)
+    | EPred _ pred args => Some (trnsl_pred pred args)
+    | EAnd _ a1 a2 => 
+      match (trnsl_assertions a1), (trnsl_assertions a2) with
+      | None, _ => None
+      | _, None => None
+      | Some a1, Some a2 => Some (a1 ∗ a2)%I
+      end
     end
-    (* with
-    trnsl_pred pred args : iProp Σ :=
-      match pred_map !! pred with
-      | Some pred_rec =>
-        let subst_map := list_to_map (zip pred_rec.(pred_args) args) in
-
-        trnsl_assertions (subst pred_rec.(pred_body) subst_map)
-      | None => True
-      end *)
     .
 
   Axiom trnsl_pred_validity : forall (pred : pred_name) (args : list LExpr), 
@@ -439,7 +445,7 @@ Section Translation.
     | Some pred_rec => 
       let subst_map := list_to_map (zip pred_rec.(pred_args) args) in
 
-      trnsl_assertions (subst pred_rec.(pred_body) subst_map) = (trnsl_pred pred args)
+      trnsl_assertions (subst pred_rec.(pred_body) subst_map) = Some (trnsl_pred pred args)
     | None => true
     end
   .
@@ -449,12 +455,12 @@ Section Translation.
     | Some inv_rec => 
       let subst_map := list_to_map (zip inv_rec.(inv_args) args) in
 
-      trnsl_assertions (subst inv_rec.(inv_body) subst_map) = (trnsl_inv inv args)
+      trnsl_assertions (subst inv_rec.(inv_body) subst_map) = Some (trnsl_inv inv args)
     | None => true
     end
   .
 
-  Definition entails P Q := trnsl_assertions P ⊢ trnsl_assertions Q.
+  Definition entails P Q := ∃ P' Q', trnsl_assertions P = Some P' /\ trnsl_assertions Q = Some Q' /\ (P' ⊢  Q')%I.
 
   Definition stack: Type := gmap var LExpr.
 
@@ -475,20 +481,22 @@ Section Translation.
     | Some le1, Some le2 => Some (LBinOp op le1 le2)
     | _, _ => None
     end
-  (* | IfE e1 e2 e3 => 
-    match (trnsl_ravenExpr_lExpr stk e1), (trnsl_ravenExpr_lExpr stk e2), (trnsl_ravenExpr_lExpr stk e3) with
-    | Some le1, Some le2, Some le3 => Some (LIfE le1 le2 le3)
-    | _, _, _ => None
-    end *)
   end.
 
-  Fixpoint trnsl_stmt (s : stmt) stk : option lang.stmt := match s with
+  Inductive trnsl_stmt_ret :=
+  | None'
+  | Error
+  | Some' (s: lang.stmt).
+
+  Fixpoint trnsl_stmt (s : stmt) stk : trnsl_stmt_ret := match s with
   | Seq s1 s2 => 
     match trnsl_stmt s1 stk, trnsl_stmt s2 stk with
-    | None, None => None
-    | Some s1, None => Some s1
-    | None, Some s2 => Some s2
-    | Some s1', Some s2' => Some (stmt_append s1' s2' )
+    | None', None' => None'
+    | Some' s1, None' => Some' s1
+    | None', Some' s2 => Some' s2
+    | Some' s1', Some' s2' => Some' (stmt_append s1' s2' )
+    | Error, _
+    | _, Error => Error
     end
   (* | Return e => match trnsl_ravenExpr_lExpr stk e with
     | Some lexpr =>
@@ -502,42 +510,53 @@ Section Translation.
   | IfS e s1 s2 => match (trnsl_ravenExpr_lExpr stk e) with
     | Some lexpr => 
       match (trnsl_expressions lexpr), (trnsl_stmt s1 stk), (trnsl_stmt s2 stk) with
-      | None, _, _ => None
-      | Some e', None, None => None
-      | Some e', Some s1, None => Some (lang.IfS e' s1 lang.SkipS)
-      | Some e', None, Some s2 => Some (lang.IfS e' lang.SkipS s2 )
-      | Some e', Some s1, Some s2 => Some (lang.IfS e' s1 s2) 
+      | None, _, _ => Error
+      | Some e', None', None' => None'
+      | Some e', Some' s1, None' => Some' (lang.IfS e' s1 lang.SkipS)
+      | Some e', None', Some' s2 => Some' (lang.IfS e' lang.SkipS s2 )
+      | Some e', Some' s1, Some' s2 => Some' (lang.IfS e' s1 s2) 
+      | Some e', Error, _ | Some e', _, Error => Error
       end
-    | None => None
+    | None => Error
     end
   | Assign v e => 
     match trnsl_ravenExpr_lExpr stk e with
     | Some lexpr =>
       match (trnsl_expressions lexpr) with
-      | Some e => Some (lang.Assign v e)
-      | None => None
+      | Some e => Some' (lang.Assign v e)
+      | None => Error
       end
-    | None => None
+    | None => Error
     end
-  | SkipS => Some (lang.SkipS)
-  | StuckS => Some lang.StuckS
+  | SkipS => Some' (lang.SkipS)
+  | StuckS => Some' lang.StuckS
   (* | ExprS e => 
     match (trnsl_ravenExpr_lExpr stk e) with
     | Some lexpr => Some (trnsl_expressions lexpr)
     | None => None
     end *)
-  | Call v proc args => None
-  | FldWr e1 fld e2 => None
-  | FldRd v e1 fld => None
-  | CAS v e1 fld e2 e3 => None
-  | Alloc e fs => None
-  | Spawn proc args => None
+  | Call v proc args => None'
+  (* Some (lang.Call v proc args) *)
+  | FldWr e1 fld e2 => 
+    match (trnsl_ravenExpr_lExpr stk e1), (trnsl_ravenExpr_lExpr stk e2) with
+    | Some lexpr1, Some lexpr2 => 
+      match (trnsl_expressions lexpr1), (trnsl_expressions lexpr2) with
+      | Some e1', Some e2' => Some' (lang.FldWr e1' fld e2')
+      |  _, _ => Error
+      end
+    | _, _ => Error
+    end
   
-  | UnfoldPred pred args => None
-  | FoldPred pred args => None
-  | UnfoldInv inv args => None
-  | FoldInv inv args => None
-  | Fpu e fld old_val new_val => None
+  | FldRd v e1 fld => None'
+  | CAS v e1 fld e2 e3 => None'
+  | Alloc e fs => None'
+  | Spawn proc args => None'
+  
+  | UnfoldPred pred args => None'
+  | FoldPred pred args => None'
+  | UnfoldInv inv args => None'
+  | FoldInv inv args => None'
+  | Fpu e fld old_val new_val => None'
   end.
 
 End Translation.
@@ -545,64 +564,55 @@ End Translation.
 
 Section RavenLogic.
 
-  (* Inductive RavenHoareTriple :=
-  | HoareTriple (p: assertion) (a1: AtomicAnnotation) (s: stmt) (q: assertion) (a2: AtomicAnnotation). *)
+  Definition fresh_lvar (stk: stack) v := forall v', not (stk !! v' = Some (LVar v)). 
 
-
+  Fixpoint field_list_to_assertion lexpr fld_vals  := match fld_vals with
+  | [] => LPure true
+  | (fld,val) :: fld_vals => LAnd (LOwn lexpr fld val) (field_list_to_assertion lexpr fld_vals)
+  end.
 
   Inductive RavenHoareTriple : 
   stack -> l_assertion -> AtomicAnnotation -> 
       stmt -> 
   stack -> l_assertion -> AtomicAnnotation -> Prop :=
-  | mkHoareTriple : forall stk p a1 s stk' q a2, RavenHoareTriple stk p a1 s stk' q a2.
 
-
-
-  Definition fresh_lvar (stk: stack) v := forall v', not (stk !! v' = Some (LVar v)). 
-
-  Definition VarAssignmentRule stk i1 i2 mask v v2 e lexpr :=
+  | VarAssignmentRule stk i1 i2 mask v v2 e lexpr :
     oneAtomicStep i1 i2 ->
     trnsl_ravenExpr_lExpr stk e = Some lexpr ->
     fresh_lvar stk v2 ->
     RavenHoareTriple 
       stk (EPure _ True) (mask, i1) 
         (Assign v e) 
-      (<[v := LVar v2]> stk) (LExprA (LBinOp EqOp (LVar v2) lexpr)) (mask, i2).
-
-  Definition HeapReadRule stk i1 i2 mask x e val fld lexpr_e lvar_x  :=
+      (<[v := LVar v2]> stk) (LExprA (LBinOp EqOp (LVar v2) lexpr)) (mask, i2)
+    
+  
+  | HeapReadRule stk i1 i2 mask x e val fld lexpr_e lvar_x  :
     oneAtomicStep i1 i2 ->
     trnsl_ravenExpr_lExpr stk e = Some lexpr_e ->
     fresh_lvar stk lvar_x ->
     RavenHoareTriple 
       stk (LOwn lexpr_e fld val) (mask, i1) 
         (FldRd x e fld)
-      (<[x := LVar lvar_x]> stk) (LAnd (LOwn lexpr_e fld val) (LExprA (LBinOp EqOp (LVar lvar_x) (LVal val)))) (mask, i2).
+      (<[x := LVar lvar_x]> stk) (LAnd (LOwn lexpr_e fld val) (LExprA (LBinOp EqOp (LVar lvar_x) (LVal val)))) (mask, i2)
 
-
-  (* Need e2 to resolve to an LVal. Should own predicates also take LExpr for values? *)
-  Definition HeapWriteRule stk i1 i2 mask e1 fld e2 old_val new_val lexpr1 :=
+  | HeapWriteRule stk i1 i2 mask e1 fld e2 old_val new_val lexpr1 :
     oneAtomicStep i1 i2 ->
     trnsl_ravenExpr_lExpr stk e1 = Some lexpr1 ->
     trnsl_ravenExpr_lExpr stk e2 = Some (LVal new_val) ->
     RavenHoareTriple
       stk (LOwn lexpr1 fld old_val) (mask, i1)
         (FldWr e1 fld e2)
-      stk (LOwn lexpr1 fld new_val) (mask, i2).
-  
-  Fixpoint field_list_to_assertion lexpr fld_vals  := match fld_vals with
-  | [] => LPure true
-  | (fld,val) :: fld_vals => LAnd (LOwn lexpr fld val) (field_list_to_assertion lexpr fld_vals)
-  end.
-
-  Definition HeapAllocRule stk i1 i2 mask x fld_vals lvar_x :=
+      stk (LOwn lexpr1 fld new_val) (mask, i2)
+    
+  | HeapAllocRule stk i1 i2 mask x fld_vals lvar_x :
     oneAtomicStep i1 i2 ->
     fresh_lvar stk lvar_x ->
     RavenHoareTriple
       stk (LPure true) (mask, i1)
         (Alloc (Var x) fld_vals)
-      (<[x := LVar lvar_x]> stk) (field_list_to_assertion (LVar lvar_x) fld_vals) (mask, i2).
-  
-  Definition ProcCallRuleRet stk i mask x proc_name args lexprs lvar_x proc_record :=
+      (<[x := LVar lvar_x]> stk) (field_list_to_assertion (LVar lvar_x) fld_vals) (mask, i2)
+
+  | ProcCallRuleRet stk i mask x proc_name args lexprs lvar_x proc_record :
     i = Closed ->
     fresh_lvar stk lvar_x ->
     proc_map !! proc_name = Some proc_record ->
@@ -611,10 +621,10 @@ Section RavenLogic.
     let subst_map := list_to_map (zip proc_record.(proc_args) lexprs) in
     RavenHoareTriple
       stk (subst proc_record.(proc_precond) subst_map) (mask, i)
-        (Call (Some x) proc_name args)
-      (<[x := LVar lvar_x]> stk) (subst proc_record.(proc_postcond) (<[ proc_record.(ret_var) := LVar lvar_x]> subst_map)) (mask, i).
+        (Call x proc_name args)
+      (<[x := LVar lvar_x]> stk) (subst proc_record.(proc_postcond) (<[ proc_record.(ret_var) := LVar lvar_x]> subst_map)) (mask, i)
 
-  Definition SequenceRule stk1 i1 mask1 a1 c1 stk2 i2 mask2 a2 c2 stk3 i3 mask3 a3 :=
+  | SequenceRule stk1 i1 mask1 a1 c1 stk2 i2 mask2 a2 c2 stk3 i3 mask3 a3 :
     RavenHoareTriple
       stk1 a1 (mask1, i1)
         c1
@@ -628,10 +638,10 @@ Section RavenLogic.
     RavenHoareTriple
       stk1 a1 (mask1, i1)
         (Seq c1 c2)
-      stk3 a3 (mask3, i3).
+      stk3 a3 (mask3, i3)
 
-  Definition CondRule stk1 stk2 i1 i2 mask1 mask2 e s1 s2 p q lexpr :=
-   trnsl_ravenExpr_lExpr stk1 e = Some lexpr ->
+  | CondRule stk1 stk2 i1 i2 mask1 mask2 e s1 s2 p q lexpr :
+    trnsl_ravenExpr_lExpr stk1 e = Some lexpr ->
     RavenHoareTriple
       stk1 (LAnd p (LExprA (lexpr))) (mask1, i1)
         s1
@@ -645,9 +655,9 @@ Section RavenLogic.
     RavenHoareTriple
       stk1 p (mask1, i1)
         (IfS e s1 s2)
-      stk2 q (mask2, i2).
+      stk2 q (mask2, i2)
 
-  Definition FrameRule stk1 stk2 i1 i2 mask1 mask2 s p q r :=
+  | FrameRule stk1 stk2 i1 i2 mask1 mask2 s p q r :
     RavenHoareTriple
       stk1 p (mask1, i1)
         s
@@ -656,15 +666,15 @@ Section RavenLogic.
     RavenHoareTriple
       stk1 (LAnd p r) (mask1, i1)
         s
-      stk2 (LAnd q r) (mask2, i2).
+      stk2 (LAnd q r) (mask2, i2)
 
-  Definition InvUnfoldRule stk i1 i2 mask1 inv args inv_record lexprs :=
+  | InvUnfoldRule stk i1 i2 mask1 inv args inv_record lexprs :
     (map (fun arg => trnsl_ravenExpr_lExpr stk arg) args) = (map (fun lexpr => Some lexpr) lexprs) ->
     match i1, i2 with
-    | Closed, Opened s => s = {[ (inv, lexprs) ]}
-    | Opened s1, Opened s2 => s2 = s1 ∪ {[ (inv, lexprs) ]}
-    | Stepped s1, Stepped s2 => s2 = s1 ∪ {[ (inv, lexprs) ]}
-    | _, _ => False
+      | Closed, Opened s => s = [ (inv, lexprs) ]
+      | Opened s1, Opened s2 => s2 = (inv, lexprs) :: s1
+      | Stepped s1, Stepped s2 => s2 = (inv, lexprs) :: s1
+      | _, _ => False
     end
     ->
     inv ∈ mask1 ->
@@ -674,15 +684,14 @@ Section RavenLogic.
       stk (LInv inv lexprs) (mask1, i1)
         (UnfoldInv inv args) 
       stk (subst inv_record.(inv_body) subst_map) (mask1 ∖ {[inv]}, i2)
-  .
-  
-  Definition InvFoldRule stk i1 i2 mask1 inv args inv_record lexprs :=
+
+  | InvFoldRule stk i1 i2 mask1 inv args inv_record lexprs :
     (map (fun arg => trnsl_ravenExpr_lExpr stk arg) args) = (map (fun lexpr => Some lexpr) lexprs) ->
     match i1, i2 with
-    | Opened s, Closed => s = {[ (inv, lexprs) ]}
-    | Stepped s, Closed => s = {[ (inv, lexprs) ]}
-    | Opened s1, Opened s2 => s2 = s1 ∖ {[ (inv, lexprs) ]} /\ ¬(s2 = ∅)
-    | Stepped s1, Stepped s2 => s2 = s1 ∖ {[ (inv, lexprs) ]} /\ ¬(s2 = ∅)
+    | Opened s, Closed => s = [ (inv, lexprs) ]
+    | Stepped s, Closed => s = [ (inv, lexprs) ]
+    | Opened s1, Opened s2 => s1 = (inv, lexprs) :: s2 /\ ¬(s2 = [])
+    | Stepped s1, Stepped s2 => s1 = (inv, lexprs) :: s2 /\ ¬(s2 = [])
     | _, _ => False
     end
     ->
@@ -693,9 +702,8 @@ Section RavenLogic.
       stk (subst inv_record.(inv_body) subst_map) (mask1, i1)
         (UnfoldInv inv args) 
       stk (LInv inv lexprs) (mask1 ∪ {[inv]}, i2)
-  .
 
-  Definition PredUnfoldRule stk i mask pred args pred_record lexprs :=
+  | PredUnfoldRule stk i mask pred args pred_record lexprs :
     (map (fun arg => trnsl_ravenExpr_lExpr stk arg) args) = (map (fun lexpr => Some lexpr) lexprs)
     ->
     pred_map !! pred = Some pred_record ->
@@ -704,9 +712,8 @@ Section RavenLogic.
       stk (LPred pred lexprs) (mask, i)
         (UnfoldPred pred args) 
       stk (subst pred_record.(pred_body) subst_map) (mask, i)
-  .
 
-  Definition PredFoldRule stk i mask pred args pred_record lexprs :=
+  | PredFoldRule stk i mask pred args pred_record lexprs :
     (map (fun arg => trnsl_ravenExpr_lExpr stk arg) args) = (map (fun lexpr => Some lexpr) lexprs)
     ->
     pred_map !! pred = Some pred_record ->
@@ -715,61 +722,140 @@ Section RavenLogic.
       stk (subst pred_record.(pred_body) subst_map) (mask, i)
         (FoldPred pred args) 
       stk (LPred pred lexprs) (mask, i)
-  .
 
-  Definition FPURule stk i mask e l_expr fld RAPack old_val new_val :=
+  | FPURule stk i mask e l_expr fld RAPack old_val new_val :
     trnsl_ravenExpr_lExpr stk e = Some l_expr ->
     (RAPack.(RA_inst) ).(fpuValid) old_val new_val = true ->
     RavenHoareTriple
       stk (LOwn l_expr fld (LitRAElem RAPack old_val)) (mask, i)
         (Fpu e fld (LitRAElem RAPack old_val) (LitRAElem RAPack new_val))
         stk (LOwn l_expr fld (LitRAElem RAPack new_val)) (mask, i)
-  .
 
+  | WeakeningRule stk1 stk2 i1 i2 mask1 mask2 p p' q q' c :
+    RavenHoareTriple 
+      stk1 p (mask1, i1)
+        c
+      stk2 q (mask2, i2)
+    ->
+    entails p' p ->
+    entails q q' ->
 
-  Definition WeakeningRule stk1 stk2 i1 i2 mask1 mask2 p p' q q' c :=
-  RavenHoareTriple 
-    stk1 p (mask1, i1)
-      c
-    stk2 q (mask2, i2)
-  ->
-  entails p' p ->
-  entails q q' ->
+    RavenHoareTriple 
+      stk1 p' (mask1, i1)
+        c
+      stk2 q' (mask2, i2)
 
-  RavenHoareTriple 
-    stk1 p' (mask1, i1)
-      c
-    stk2 q' (mask2, i2)
-  .
-
-  Definition SkipRule stk i1 i2 mask p :=
-  oneAtomicStep i1 i2 ->
-  RavenHoareTriple
-    stk p (mask, i1)
-      SkipS
-    stk p (mask, i2).
-
-  Definition CASSuccRule stk i1 i2 mask v e1 fld e2 e3 lvar_v lexpr1 old_val new_val :=
-  oneAtomicStep i1 i2 ->
-  fresh_lvar stk lvar_v ->
-  trnsl_ravenExpr_lExpr stk e1 = Some lexpr1 ->
-  trnsl_ravenExpr_lExpr stk e2 = Some (LVal old_val) ->
-  trnsl_ravenExpr_lExpr stk e3 = Some (LVal new_val) 
-  ->
+  | SkipRule stk i1 i2 mask p :
+    oneAtomicStep i1 i2 ->
     RavenHoareTriple
-      stk (LOwn lexpr1 fld old_val) (mask, i1)
-        (CAS v e1 fld e2 e3)
-      (<[v := LVar lvar_v]> stk) (LAnd (LOwn lexpr1 fld new_val) (LExprA (LBinOp EqOp (LVar lvar_v) (LVal (LitBool true))))) (mask, i2).
+      stk p (mask, i1)
+        SkipS
+      stk p (mask, i2)
 
-  Definition CASFailRule stk i1 i2 mask v e1 fld e2 e3 lvar_v lexpr1 old_val old_val2 :=
-  oneAtomicStep i1 i2 ->
-  fresh_lvar stk lvar_v ->
-  trnsl_ravenExpr_lExpr stk e1 = Some lexpr1 ->
-  trnsl_ravenExpr_lExpr stk e2 = Some (LVal old_val2)
-  ->
-    RavenHoareTriple
-      stk (LAnd (LOwn lexpr1 fld old_val) (LExprA (LUnOp NotBoolOp (LBinOp EqOp (LVal old_val) (LVal old_val2))))) (mask, i1) 
-        (CAS v e1 fld e2 e3)
-      (<[v := LVar lvar_v]> stk) (LAnd (LOwn lexpr1 fld old_val) (LExprA (LBinOp EqOp (LVar lvar_v) (LVal (LitBool false))))) (mask, i2).
+  | CASSuccRule stk i1 i2 mask v e1 fld e2 e3 lvar_v lexpr1 old_val new_val :
+    oneAtomicStep i1 i2 ->
+    fresh_lvar stk lvar_v ->
+    trnsl_ravenExpr_lExpr stk e1 = Some lexpr1 ->
+    trnsl_ravenExpr_lExpr stk e2 = Some (LVal old_val) ->
+    trnsl_ravenExpr_lExpr stk e3 = Some (LVal new_val) 
+    ->
+      RavenHoareTriple
+        stk (LOwn lexpr1 fld old_val) (mask, i1)
+          (CAS v e1 fld e2 e3)
+        (<[v := LVar lvar_v]> stk) (LAnd (LOwn lexpr1 fld new_val) (LExprA (LBinOp EqOp (LVar lvar_v) (LVal (LitBool true))))) (mask, i2)
+
+  | CASFailRule stk i1 i2 mask v e1 fld e2 e3 lvar_v lexpr1 old_val old_val2 :
+    oneAtomicStep i1 i2 ->
+    fresh_lvar stk lvar_v ->
+    trnsl_ravenExpr_lExpr stk e1 = Some lexpr1 ->
+    trnsl_ravenExpr_lExpr stk e2 = Some (LVal old_val2)
+    ->
+      RavenHoareTriple
+        stk (LAnd (LOwn lexpr1 fld old_val) (LExprA (LUnOp NotBoolOp (LBinOp EqOp (LVal old_val) (LVal old_val2))))) (mask, i1) 
+          (CAS v e1 fld e2 e3)
+        (<[v := LVar lvar_v]> stk) (LAnd (LOwn lexpr1 fld old_val) (LExprA (LBinOp EqOp (LVar lvar_v) (LVal (LitBool false))))) (mask, i2)
+        
+  .
 
 End RavenLogic.
+
+Section MainTranslation.
+  (* Context `{!simpLangG Σ}. *)
+
+  Program Fixpoint trnsl_atomic_annotation (mask: coPset) (a : AtomicAnnotation) {measure match a.2 with | Closed => 0 | Opened s => length s | Stepped s => length s end} : iProp Σ :=
+    match a.2 with
+    | Closed => True
+    | Opened [] => False
+    | Stepped [] => False
+    | Opened (inv :: invs) => True ∗ trnsl_atomic_annotation (mask ∪ ↑(inv_namespace_map inv.1)) (a.1, Opened invs)
+
+    | Stepped (inv :: invs) => True ∗ trnsl_atomic_annotation (mask ∪ ↑(inv_namespace_map inv.1)) (a.1, Stepped invs)
+    end
+    .
+    Next Obligation.
+    intros. simpl; subst filtered_var; rewrite <- Heq_anonymous. simpl; lia.
+    Qed.
+    Next Obligation.
+    intros. simpl; subst filtered_var; rewrite <- Heq_anonymous. simpl; lia.
+    Qed.
+    Next Obligation.
+    intros. simpl. Admitted.
+
+
+  Definition inv_set_to_namespace (s : gset inv_name) : coPset :=
+    set_fold (λ inv acc, acc ∪ ↑(inv_namespace_map inv)) ∅ s.
+
+
+  (* Definition stack_to_stack_frame (stk : stack) : stack_frame := 
+  . *)
+
+  Definition trnsl_hoare_triple (stk : stack) (stk_id: stack_id) (p : l_assertion) (a1 : AtomicAnnotation) (cmd : stmt) (stk' : stack) (q : l_assertion) (a2 : AtomicAnnotation) : iProp Σ :=
+      match (trnsl_stmt cmd stk), (trnsl_assertions p), (trnsl_assertions q) with
+      | Error, _, _ | _, None, _ | _, _, None => True
+      | None', Some p', Some q' => 
+        (p' ∗ trnsl_atomic_annotation (inv_set_to_namespace a1.1) a1) -∗ |={(inv_set_to_namespace a1.1), (inv_set_to_namespace a2.1) }=> (q' ∗ trnsl_atomic_annotation (inv_set_to_namespace a2.1) a2)
+      | Some' s, Some p', Some q' => 
+        {{{ p' }}}  to_rtstmt stk_id s  {{{ RET lang.LitUnit; q' }}}
+      end
+  .
+
+  Theorem rrl_validity stk stk_id p a1 cmd stk' q a2 :
+    RavenHoareTriple stk p a1 cmd stk' q a2 ->
+    ⊢ (trnsl_hoare_triple stk stk_id p a1 cmd stk' q a2).
+  Proof.
+    intros H.
+    destruct H as [ | | | | | | | | | | | | | | | | ].
+    3: {
+      unfold trnsl_hoare_triple.
+      destruct (trnsl_stmt (FldWr e1 fld0 e2) stk) eqn:Ht. 2:{done. }
+      - inversion Ht. simpl.
+        destruct (trnsl_ravenExpr_lExpr stk e1); try done.
+        destruct (trnsl_ravenExpr_lExpr stk e2); try done.
+        destruct (trnsl_expressions l); try done.
+        destruct (trnsl_expressions l0); try done.
+      
+      -
+        destruct (trnsl_assertions (LOwn lexpr1 fld0 old_val)) eqn:HOldV; try done.
+        destruct (trnsl_assertions (LOwn lexpr1 fld0 new_val)) eqn:HNewV; try done.
+      inversion Ht.
+        destruct (trnsl_ravenExpr_lExpr stk e1) eqn:He1; try done.
+        destruct (trnsl_ravenExpr_lExpr stk e2) eqn:He2; try done.
+        destruct (trnsl_expressions l); try done.
+        destruct (trnsl_expressions l0); try done.
+        inversion H3; subst. simpl. destruct H3.
+
+        (* iApply wp_heap_wr.
+        iModIntro.
+        
+        
+        
+        destruct (trnsl_val old_val). 2:{ simpl. iIntros "[F _]". iExFalso. iFrame. }
+        iIntros  "[Hl HAtm]". 
+        } *)
+        
+      Admitted.
+
+  
+
+
+End MainTranslation.
