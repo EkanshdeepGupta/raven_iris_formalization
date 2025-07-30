@@ -52,8 +52,8 @@ Section MainTranslation.
     (* Definition stack_to_stack_frame (stk : stack) : stack_frame := 
     . *)
   
-    Definition trnsl_hoare_triple (stk : stack) (stk_frm : stack_frame) (stk_id: stack_id) (p : l_assertion) (a1 : AtomicAnnotation) (cmd : stmt) (stk' : stack) (stk_frm' : stack_frame) (q : l_assertion) (a2 : AtomicAnnotation) : iProp rrl_lang.Σ :=
-        match (trnsl_stmt cmd stk), (trnsl_assertions p), (trnsl_assertions q) with
+    Definition trnsl_hoare_triple (stk : stack) (stk_frm : stack_frame) (stk_id: stack_id) (p : assertion) (a1 : AtomicAnnotation) (cmd : stmt) (stk' : stack) (stk_frm' : stack_frame) (q : assertion) (a2 : AtomicAnnotation) : iProp rrl_lang.Σ :=
+        match (trnsl_stmt cmd stk), (trnsl_assertion p), (trnsl_assertion q) with
         | Error, _, _ | _, None, _ | _, _, None => True
         | None', Some p', Some q' => 
           (p' ∗ trnsl_atomic_annotation (inv_set_to_namespace a1.1) a1) -∗ |={(inv_set_to_namespace a1.1), (inv_set_to_namespace a2.1) }=> (q' ∗ trnsl_atomic_annotation (inv_set_to_namespace a2.1) a2)
@@ -72,30 +72,12 @@ Section MainTranslation.
       3: {
         unfold trnsl_hoare_triple.
         destruct (trnsl_stmt (FldWr e1 fld e2) stk) eqn:Ht. 2:{done. }
-        - inversion Ht. simpl.
-          destruct (trnsl_ravenExpr_lExpr stk e1); try done.
-          destruct (trnsl_ravenExpr_lExpr stk e2); try done.
-          destruct (trnsl_expressions l); try done.
-          destruct (trnsl_expressions l0); try done.
-        
+        - inversion Ht. 
         -
-          destruct (trnsl_assertions (LOwn lexpr1 fld old_val)) eqn:HOldV; try done.
-          destruct (trnsl_assertions (LOwn lexpr1 fld new_val)) eqn:HNewV; try done.
+
         inversion Ht.
-          destruct (trnsl_ravenExpr_lExpr stk e1) eqn:He1; try done.
-          destruct (trnsl_ravenExpr_lExpr stk e2) eqn:He2; try done.
-          destruct (trnsl_expressions l); try done.
-          destruct (trnsl_expressions l0); try done.
-          inversion H3; subst. simpl. destruct H3.
-  
-          (* iApply wp_heap_wr.
-          iModIntro.
-  
-  
-  
-        destruct (trnsl_val old_val). 2:{ simpl. iIntros "[F _]". iExFalso. iFrame. }
-        iIntros  "[Hl HAtm]". 
-      } *)
+
+          inversion H3; subst. simpl. destruct H2.
   
   
     Admitted.
