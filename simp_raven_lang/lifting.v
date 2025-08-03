@@ -38,13 +38,13 @@ Section lifting.
 
   Context `{!simpLangG Σ}.
 
-  Lemma wp_heap_wr stk_id stk_frm e v l f x:
-    {{{ stack_own[ stk_id, stk_frm] ∗ l#f ↦{1%Qp} x ∗ ⌜expr_step e stk_frm (Val v)⌝}}}
-      (RTFldWr (Val (LitLoc l)) f e stk_id)
+  Lemma wp_heap_wr stk_id stk_frm e0 e v l f x:
+    {{{ stack_own[ stk_id, stk_frm] ∗ l#f ↦{1%Qp} x ∗ ⌜expr_step e0 stk_frm (Val (LitLoc l))⌝ ∗ ⌜expr_step e stk_frm (Val v)⌝}}}
+      (RTFldWr e0 f e stk_id)
     {{{RET LitUnit; stack_own[ stk_id, stk_frm] ∗ l#f ↦{1%Qp} v}}}.
     (* Unset Printing Notations. *)
   Proof.
-    iIntros (Φ) "[Hstk [Hl %He]] HΦ" .
+    iIntros (Φ) "[Hstk [Hl [%He %He2]]] HΦ" .
     iApply wp_lift_atomic_base_step_no_fork; first done.
     iIntros (σ ns κ κs nt) "Hstate". 
     iDestruct "Hstate" as "[Hhp [Hproc Hstack]]".
@@ -54,22 +54,29 @@ Section lifting.
       iExists [], (RTVal LitUnit), (update_heap σ l f v), [].
       iPureIntro.
       apply (FldWrStep σ stk_id stk_frm _ f e l v); try done.
-      apply ExprRefl.
+      
       
 
     - iNext. iIntros (e2 σ2 efs) "%H Hcred".
       inversion H as [  |  |  |  
-        | σ0 stk_id0 stk_frm0 e1 fld e0 l0 v0 Hstk_frm0  Hl0 Hv0 
-      |  |  |  |  |  |  ]; subst κ efs σ2 σ0 fld stk_id0 e0 e1 e2; simpl; iFrame.
+        | σ0 stk_id0 stk_frm0 e1 fld e' l0 v0 Hstk_frm0  Hl0 Hv0 
+      |  |  |  |  |  |  ]; subst κ efs σ2 σ0 fld stk_id0 e' e1 e2; simpl; iFrame.
       
       assert (l = l0) as Hlsubst. 
-        { inversion Hl0; done. } subst l0.
+        { rewrite  HstkPure in Hstk_frm0. injection Hstk_frm0 as Hstk_frm0. subst stk_frm0. 
+        
+        assert (LitLoc l = LitLoc l0 -> l = l0) as H0. { intros Htemp; inversion Htemp; done. }
+
+        apply H0.
+
+
+        apply (expr_step_val_unique e0 stk_frm (LitLoc l) (LitLoc l0)); done. } subst l0.
       assert (stk_frm0 = stk_frm) as Hstkfrm_subst. { 
           rewrite HstkPure in Hstk_frm0.  
           injection Hstk_frm0 as Hstk_frm0; try done.
       } subst stk_frm0. 
       assert (v = v0) as Hvsubst. 
-        { apply (expr_step_val_unique _ _ _ _ He Hv0). } subst v0.
+        { apply (expr_step_val_unique _ _ _ _ He2 Hv0). } subst v0.
       
       iCombine "Hhp Hl" as "Hcomb".
       iSplitR; first done.

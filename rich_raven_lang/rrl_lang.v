@@ -57,21 +57,6 @@ Global Axiom ra_eq_dec :  EqDecision RA_Pack .
 
 Parameter ResourceAlgebras : list RA_Pack.
 
-
-(* Record loc := Loc { loc_car : Z }.
-
-(* Type class instances for loc *)
-Global Instance loc_eq_decision : EqDecision loc.
-Proof.
-  solve_decision.
-Qed.
-
-Global Instance loc_countable : Countable loc.
-Proof.
-  refine (inj_countable' loc_car (λ x, Loc x) _).
-  intros [x]. simpl. f_equal.
-Qed. *)
-
 Inductive typ :=
 | TpInt | TpLoc | TpBool.
 
@@ -112,6 +97,11 @@ match v with
 | lang.LitUnit => LitUnit
 | lang.LitLoc l => LitLoc l
 end.
+
+Lemma trnsl_val_inj : forall v1 v2, trnsl_val v1 = trnsl_val v2 -> v1 = v2.
+Proof.
+  destruct v1, v2; simpl; try discriminate; intros H; inversion H; subst; auto.
+Qed.
 
 Fixpoint lexpr_subst (expr : LExpr) (subst_map : gmap var LExpr) :=
 match expr with
@@ -352,38 +342,6 @@ Section Translation.
     | LitRAElem _ _ => None
     end.
 
-    (* Fixpoint trnsl_expressions (e: LExpr) : option lang.expr := match e with
-    | LVar x => 
-      (* What should LVar translate to? *)  
-      Some (lang.Var x)
-    | LVal v =>
-        match trnsl_lval v with
-        | None => None
-        | Some v => Some (lang.Val v)
-        end
-    | LUnOp op e => 
-        match (trnsl_expressions e) with
-        | None => None
-        | Some e => Some (lang.UnOp op e)
-        end
-
-    
-    | LBinOp op e1 e2 => 
-      match (trnsl_expressions e1), (trnsl_expressions e2) with
-      | Some e1, Some e2 => Some (lang.BinOp op e1 e2)
-      | _, _ => None
-      end
-
-    | LIfE e1 e2 e3 =>
-      match (trnsl_expressions e1), (trnsl_expressions e2), (trnsl_expressions e3) with
-      | Some e1, Some e2, Some e3 => Some (lang.IfE e1 e2 e3)
-      | _, _, _ => None
-      end
-
-    | LStuck => Some StuckE
-    end. *)
-
-
     Global Parameter trnsl_pred : pred_name -> list LExpr -> iProp Σ.
     Global Parameter trnsl_inv : inv_name -> list LExpr -> iProp Σ.
 
@@ -401,7 +359,7 @@ Section Translation.
       | Some chunk =>
         Some (∃ l: lang.loc, (
           ⌜LExpr_holds (LBinOp EqOp l_expr (LVal (LitLoc l)))⌝ ∗ 
-          (l#fld ↦{ 1 } lang.LitInt 0)
+          (l#fld ↦{ 1 } chunk)
         )%I)%I
         (* (heap_maps_to l fld 1 chunk) *)
       | None => None
@@ -515,14 +473,6 @@ Section Translation.
     | Error, _
     | _, Error => Error
     end
-  (* | Return e => match trnsl_expr_lExpr stk e with
-    | Some lexpr =>
-      match trnsl_expressions lexpr with
-        | None => None
-        | Some e => Some (lang.Return e)
-      end
-    | None => None
-    end *)
 
   | IfS e s1 s2 => 
       match (trnsl_stmt s1 stk), (trnsl_stmt s2 stk) with
@@ -536,11 +486,6 @@ Section Translation.
   | Assign v e => Some' (lang.Assign v e)
   | SkipS => Some' (lang.SkipS)
   | StuckS => Some' lang.StuckS
-  (* | ExprS e => 
-    match (trnsl_expr_lExpr stk e) with
-    | Some lexpr => Some (trnsl_expressions lexpr)
-    | None => None
-    end *)
   | Call v proc args => None'
   (* Some (lang.Call v proc args) *)
   | FldWr e1 fld e2 => Some' (lang.FldWr e1 fld e2)
@@ -777,68 +722,14 @@ Section RavenLogic.
 
 End RavenLogic.
 
-Section MainTranslation.
-  (* Context `{!simpLangG Σ}. *)
+Section LExpr_embed.
+  (* TODO: Figure out the right way to do this deep embedding *)
+  Axiom EqOp_refl : forall a b, LExpr_holds (LBinOp EqOp a b) -> LExpr_holds (LBinOp EqOp b a).
 
-  Program Fixpoint trnsl_atomic_annotation (mask: coPset) (a : AtomicAnnotation) {measure match a.2 with | Closed => 0 | Opened s => length s | Stepped s => length s end} : iProp Σ :=
-    match a.2 with
-    | Closed => True
-    | Opened [] => False
-    | Stepped [] => False
-    | Opened (inv :: invs) => True ∗ trnsl_atomic_annotation (mask ∪ ↑(inv_namespace_map inv.1)) (a.1, Opened invs)
+  Axiom EqOp_trans : forall a b c, LExpr_holds (LBinOp EqOp a b) -> LExpr_holds (LBinOp EqOp b c) -> LExpr_holds (LBinOp EqOp a c).
 
-    | Stepped (inv :: invs) => True ∗ trnsl_atomic_annotation (mask ∪ ↑(inv_namespace_map inv.1)) (a.1, Stepped invs)
-    end
-    .
-    Next Obligation.
-    intros. simpl; subst filtered_var; rewrite <- Heq_anonymous. simpl; lia.
-    Qed.
-    Next Obligation.
-    intros. simpl; subst filtered_var; rewrite <- Heq_anonymous. simpl; lia.
-    Qed.
-    Next Obligation.
-    intros. simpl. Admitted.
+  Axiom EqOp_subst : forall var le e, LExpr_holds (LBinOp EqOp (LVar var) le) -> LExpr_holds e -> LExpr_holds (lexpr_subst e (<[ var := le]> ∅)).
 
+  Axiom EqpOp_LVal : forall v1 v2, LExpr_holds (LBinOp EqOp (LVal v1) (LVal v2)) -> v1 = v2.
 
-  Definition inv_set_to_namespace (s : gset inv_name) : coPset :=
-    set_fold (λ inv acc, acc ∪ ↑(inv_namespace_map inv)) ∅ s.
-
-
-  (* Definition stack_to_stack_frame (stk : stack) : stack_frame := 
-  . *)
-
-  Definition trnsl_hoare_triple (stk : stack) (stk_id: stack_id) (p : assertion) (a1 : AtomicAnnotation) (cmd : stmt) (stk' : stack) (q : assertion) (a2 : AtomicAnnotation) : iProp Σ :=
-      match (trnsl_stmt cmd stk), (trnsl_assertion p), (trnsl_assertion q) with
-      | Error, _, _ | _, None, _ | _, _, None => True
-      | None', Some p', Some q' => 
-        (p' ∗ trnsl_atomic_annotation (inv_set_to_namespace a1.1) a1) -∗ |={(inv_set_to_namespace a1.1), (inv_set_to_namespace a2.1) }=> (q' ∗ trnsl_atomic_annotation (inv_set_to_namespace a2.1) a2)
-      | Some' s, Some p', Some q' => 
-        {{{ p' }}}  to_rtstmt stk_id s  {{{ RET lang.LitUnit; q' }}}
-      end
-  .
-
-  Theorem rrl_validity stk stk_id p a1 cmd stk' q a2 :
-    RavenHoareTriple stk p a1 cmd stk' q a2 ->
-    ⊢ (trnsl_hoare_triple stk stk_id p a1 cmd stk' q a2).
-  Proof.
-    intros H.
-    destruct H as [ | | | | | | | | | | | | | | | | ].
-    3: {
-      unfold trnsl_hoare_triple.
-      destruct (trnsl_stmt (FldWr e1 fld0 e2) stk) eqn:Ht. 2:{done. }
-      - inversion Ht.
-      
-      -
-        destruct (trnsl_assertion (LOwn lexpr1 fld0 old_val)) eqn:HOldV; try done.
-        destruct (trnsl_assertion (LOwn lexpr1 fld0 new_val)) eqn:HNewV; try done.
-      inversion Ht.
-        destruct (trnsl_expr_lExpr stk e1) eqn:He1; try done.
-        destruct (trnsl_expr_lExpr stk e2) eqn:He2; try done.
-
-        inversion H3; subst. simpl. destruct H2.
-      Admitted.
-
-  
-
-
-End MainTranslation.
+End LExpr_embed.
