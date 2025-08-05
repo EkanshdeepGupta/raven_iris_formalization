@@ -10,7 +10,6 @@ From iris.base_logic.lib Require Export own.
 From iris.base_logic.lib Require Import ghost_map.
 From iris.base_logic.lib Require Import invariants.
 
-
 From iris.program_logic Require Export weakestpre.
 From iris.program_logic Require Import ectx_lifting.
 From iris.proofmode Require Import tactics.
@@ -22,7 +21,7 @@ From Coq.Program Require Import Wf.
 
 Context `{!simpLangG Σ}.
 
-Definition var := string.
+Definition lvar := string.
 
 Definition proc_name := string.
 Global Parameter proc_set : gset proc_name.
@@ -66,18 +65,25 @@ Parameter fld_set : gset fld_name.
 Record fld := Fld { fld_name_val : fld_name; fld_typ : typ }.
 
 Inductive val :=
-| LitBool (b: bool) | LitInt (i: Z) | LitUnit | LitLoc (l: loc)
-| LitRAElem : forall (r : RA_Pack), RA_carrier r -> val.
+| LitBool (b: bool) | LitInt (i: Z) | LitUnit | LitLoc (l: loc).
+(* | LitRAElem : forall (r : RA_Pack), RA_carrier r -> val. *)
 
-(* Inductive lang.expr :=
-| Var (x : var)
-| Val (v : val)
-| UnOp (op : un_op) (e : lang.expr)
-| BinOp (op : bin_op) (e1 e2 : lang.expr)
-. *)
+(* TODO: Figure out how to incorporate RA values *)
+Inductive LitRAElem (r : RA_Pack) (x : RA_carrier r): Type. 
+
+Scheme Equality for val.
+
+(* Inductive eq {A : Type} (x : A) : A -> Prop := eq_refl : eq x x. *)
+
+
+(* Definition val_eq_dec : forall (x y : val), { x = y } + { x <> y }.
+Proof.
+decide equality.
+Defined. *)
+
 
 Inductive LExpr :=
-| LVar (x : var)
+| LVar (x : lvar)
 | LVal (v : val)
 | LUnOp (op : un_op) (e : LExpr)
 | LBinOp (op : bin_op) (e1 e2 : LExpr)
@@ -86,9 +92,174 @@ Inductive LExpr :=
 | LStuck
 .
 
-
 (* TODO: Figure out the right way to do this deep embedding *)
-Parameter LExpr_holds : LExpr ->  Prop.
+
+Definition symb_map : Type := lvar -> val.
+
+
+Fixpoint interp_lexpr (le : LExpr) (mp : symb_map) : option val :=
+  match le with
+  | LVar x => Some (mp x)
+  
+  | LVal v => Some v
+
+  | LUnOp op e =>
+    match op with
+    | NotBoolOp =>
+      match interp_lexpr e mp with
+      | Some (LitBool b) => Some (LitBool (negb b))
+      | _ => None
+      end
+    | NegOp =>
+      match interp_lexpr e mp with
+      | Some (LitInt i) => Some (LitInt (-1 * i))
+      | _ => None
+      end
+    end
+  
+  | LBinOp op e1 e2 =>
+    match op with
+    | AddOp =>
+      match interp_lexpr e1 mp, interp_lexpr e2 mp with
+      | Some (LitInt i1), Some (LitInt i2) => Some (LitInt (i1 + i2))
+      | _, _ => None
+      end
+
+    | SubOp =>
+      match interp_lexpr e1 mp, interp_lexpr e2 mp with
+      | Some (LitInt i1), Some (LitInt i2) => Some (LitInt (i1 - i2))
+      | _, _ => None
+      end
+
+    | MulOp =>
+      match interp_lexpr e1 mp, interp_lexpr e2 mp with
+      | Some (LitInt i1), Some (LitInt i2) => Some (LitInt (i1 * i2))
+      | _, _ => None  
+      end
+
+    | DivOp =>
+      match interp_lexpr e1 mp, interp_lexpr e2 mp with
+      | Some (LitInt i1), Some (LitInt i2) => Some (LitInt (i1 / i2))
+      | _, _ => None
+      end
+
+    | ModOp =>
+      match interp_lexpr e1 mp, interp_lexpr e2 mp with
+      | Some (LitInt i1), Some (LitInt i2) => Some (LitInt (i1 mod i2))
+      | _, _ => None
+      end
+
+    | EqOp =>
+      match interp_lexpr e1 mp, interp_lexpr e2 mp with
+      | Some v1, Some v2 => Some (LitBool (if val_beq v1  v2 then true else false))
+      | _, _ => None
+      end
+
+    | NeOp =>
+      match interp_lexpr e1 mp, interp_lexpr e2 mp with
+      | Some v1, Some v2 => Some (LitBool (if val_beq v1 v2 then false else true))
+      | _, _ => None
+      end
+
+    | LtOp =>
+      match interp_lexpr e1 mp, interp_lexpr e2 mp with
+      | Some (LitInt i1), Some (LitInt i2) => Some (LitBool (if Z.ltb i1 i2 then true else false))
+      | _, _ => None
+      end
+
+    | GtOp =>
+      match interp_lexpr e1 mp, interp_lexpr e2 mp with
+      | Some (LitInt i1), Some (LitInt i2) => Some (LitBool (if Z.gtb i1 i2 then true else false))
+      | _, _ => None
+      end
+    
+    | LeOp =>
+      match interp_lexpr e1 mp, interp_lexpr e2 mp with
+      | Some (LitInt i1), Some (LitInt i2) => Some (LitBool (if Z.leb i1 i2 then true else false))
+      | _, _ => None
+      end
+      
+    | GeOp =>
+      match interp_lexpr e1 mp, interp_lexpr e2 mp with
+      | Some (LitInt i1), Some (LitInt i2) => Some (LitBool (if Z.geb i1 i2 then true else false))
+      | _, _ => None
+      end
+
+    | AndOp =>
+      match interp_lexpr e1 mp, interp_lexpr e2 mp with
+      | Some (LitBool b1), Some (LitBool b2) => Some (LitBool (b1 && b2))
+      | _, _ => None
+      end
+
+    | OrOp =>
+      match interp_lexpr e1 mp, interp_lexpr e2 mp with
+      | Some (LitBool b1), Some (LitBool b2) => Some (LitBool (b1 || b2))
+      | _, _ => None
+      end
+    end
+
+  | LIfE e1 e2 e3 =>
+    match interp_lexpr e1 mp with
+    | Some (LitBool true) => interp_lexpr e2 mp
+    | Some (LitBool false) => interp_lexpr e3 mp
+    | _ => None
+    end 
+
+  | LStuck => None
+  end.
+
+
+(* TODO: Fix this with a proper error state; at present returning True when le is malformed which is not sound. *)
+Fixpoint LExpr_holds (le : LExpr) (mp : symb_map) : Prop :=
+  match le with
+  | LBinOp op e1 e2 =>
+    match op with
+    | EqOp =>
+      match interp_lexpr e1 mp, interp_lexpr e2 mp with
+      | Some v1, Some v2 => (v1 = v2)
+      | _, _ => True
+      end
+
+    | NeOp =>
+      match interp_lexpr e1 mp, interp_lexpr e2 mp with
+      | Some v1, Some v2 => not (v1 = v2)
+      | _, _ => True
+      end
+
+    | LtOp =>
+      match interp_lexpr e1 mp, interp_lexpr e2 mp with
+      | Some (LitInt i1), Some (LitInt i2) => (Z.lt i1 i2)
+      | _, _ => True
+      end
+
+    | GtOp =>
+      match interp_lexpr e1 mp, interp_lexpr e2 mp with
+      | Some (LitInt i1), Some (LitInt i2) => (Z.gt i1 i2)
+      | _, _ => True
+      end
+    
+    | LeOp =>
+      match interp_lexpr e1 mp, interp_lexpr e2 mp with
+      | Some (LitInt i1), Some (LitInt i2) => (Z.le i1 i2)
+      | _, _ => True
+      end
+      
+    | GeOp =>
+      match interp_lexpr e1 mp, interp_lexpr e2 mp with
+      | Some (LitInt i1), Some (LitInt i2) => (Z.ge i1 i2)
+      | _, _ => True
+      end
+
+    | AndOp =>
+      LExpr_holds e1 mp /\ LExpr_holds e2 mp
+
+    | OrOp =>
+      LExpr_holds e1 mp \/ LExpr_holds e2 mp
+    
+    | _ => True
+    end
+  | _ => True
+  end.
 
 Definition trnsl_val (v: lang.val) : val :=
 match v with
@@ -130,23 +301,23 @@ Proof.
     | LitInt i1, LitInt i2 => cast_if (decide (i1 = i2))
     | LitUnit, LitUnit => left eq_refl
     | LitLoc l1, LitLoc l2 => cast_if (decide (l1 = l2))
-    | LitRAElem r1 a1, LitRAElem r2 a2 =>
+    (* | LitRAElem r1 a1, LitRAElem r2 a2 =>
         match ra_eq_dec r1 r2 with
         | left Heq =>
             (* r1 = r2, so carriers are same, can cast and decide equality on carrier elements *)
             cast_if (decide (eq_rect r1 (fun r => RA_carrier r) a1 r2 Heq = a2))
 
         | right _ => right _
-        end
+        end *)
     | _, _ => right _
     end). 
   all: try by f_equal.
   all: try intros Heq; inversion Heq; auto.
-  - subst. simpl. by f_equal.
-  - subst. simpl in n. intros Heq.
-  inversion Heq as [H1].
-  assert (a1 = a2) by (apply (inj_pair2_eq_dec _ ra_eq_dec), H1).
-  done.
+  (* - subst. simpl. by f_equal. *)
+  (* - subst. simpl in n. intros Heq. *)
+  (* inversion Heq as [H1]. *)
+  (* assert (a1 = a2) by (apply (inj_pair2_eq_dec _ ra_eq_dec), H1). *)
+  (* done. *)
 Qed.
 
 (* TODO: To be proved *)
@@ -159,28 +330,29 @@ Inductive stmt :=
 | Seq (s1 s2 : stmt)
 (* | Return (e : lang.expr) *)
 | IfS (e : lang.expr) (s1 s2 : stmt)
-| Assign (v : var) (e : lang.expr)
+| Assign (v : lang.var) (e : lang.expr)
 (* | Free (e : lang.expr) *)
 | SkipS
 | StuckS (* stuck statement *)
 (* | ExprS (e : lang.expr) *)
-| Call (v : var) (proc : proc_name) (args : list lang.expr)
-| FldWr (e1 : lang.expr) (fld : fld_name) (e2 : lang.expr)
-| FldRd (v : var) (e : lang.expr) (fld : fld_name)
-| CAS (v : var) (e1 : lang.expr) (fld : fld_name) (e2 : lang.expr) (e3 : lang.expr)
+| Call (v : lang.var) (proc : proc_name) (args : list lang.expr)
+| FldWr (v : lang.var) (fld : fld_name) (e2 : lang.expr)
+| FldRd (v : lang.var) (e : lang.expr) (fld : fld_name)
+| CAS (v : lang.var) (e1 : lang.expr) (fld : fld_name) (e2 : lang.expr) (e3 : lang.expr)
 | Alloc (e : lang.expr) (fs: list (fld_name * val))
 | Spawn (proc : proc_name) (args : list lang.expr)
 | UnfoldPred (pred : pred_name) (args : list lang.expr)
 | FoldPred (pred : pred_name) (args : list lang.expr)
 | UnfoldInv (inv: inv_name) (args : list lang.expr)
 | FoldInv (inv: inv_name) (args : list lang.expr)
-| Fpu (e : lang.expr) (fld : fld_name) (old_val : val) (new_val : val)
+| Fpu (e : lang.expr) (fld : fld_name) (RAPack : RA_Pack) (old_val : RA_carrier RAPack) (new_val : RA_carrier RAPack)
 .
 
 Inductive assertion :=
 | LExprA (p: LExpr)
 | LPure (p : Prop)
 | LOwn (e: LExpr) (fld: fld_name) (chunk: val)
+| LGhostOwn (e: LExpr) (fld: fld_name) (RAPack: RA_Pack) (chunk: RA_carrier RAPack)
 | LForall (v : var) (body : assertion)
 | LExists (v : var) (body : assertion)
 | LImpl (cond : LExpr) (body : assertion)
@@ -193,6 +365,7 @@ Fixpoint subst (ra: assertion) (mp: gmap var LExpr) : assertion := match ra with
 | LExprA e => LExprA (lexpr_subst e mp)
 | LPure p => LPure p
 | LOwn e fld chunk => LOwn (lexpr_subst e mp) fld chunk
+| LGhostOwn e fld RAPack chunk => LGhostOwn e fld RAPack chunk
 | LForall vars body => LForall vars (subst body mp)
 | LExists vars body => LExists vars (subst body mp)
 | LImpl cond body => LImpl (lexpr_subst cond mp) (subst body mp)
@@ -265,11 +438,10 @@ Inductive stmt_well_defined : stmt -> Prop :=
     proc ∈ proc_set -> 
     (Forall (fun arg => expr_well_defined arg) args) ->
     stmt_well_defined (Call v proc args)
-| FldWrTp e1 fld e2: 
-    (fld ∈ fld_set) ->
-    expr_well_defined e1 -> 
+| FldWrTp v fld e2: 
+    (fld ∈ fld_set) -> 
     expr_well_defined e2 -> 
-    stmt_well_defined (FldWr e1 fld e2)
+    stmt_well_defined (FldWr v fld e2)
 | FldRdTp v e fld: 
     fld ∈ fld_set ->
     expr_well_defined e ->
@@ -304,10 +476,10 @@ Inductive stmt_well_defined : stmt -> Prop :=
     inv ∈ inv_set ->
     Forall (fun arg => expr_well_defined arg) args ->
     stmt_well_defined (FoldInv inv args)
-| FpuTp e fld old_val new_val : 
+| FpuTp e fld RAPack old_val new_val : 
     fld ∈ fld_set ->
     expr_well_defined e ->
-    stmt_well_defined (Fpu e fld old_val new_val)
+    stmt_well_defined (Fpu e fld RAPack  old_val new_val)
 .
 
 Section AtomicAnnotations.
@@ -333,39 +505,40 @@ End AtomicAnnotations.
 Section Translation.
   (* Have to include all the resource algebras  *)
 
-    Definition trnsl_lval (v: val) : option lang.val :=
+    Definition trnsl_lval (v: val) : lang.val :=
     match v with
-    | LitBool b => Some (lang.LitBool b) 
-    | LitInt i => Some (lang.LitInt i)
-    | LitUnit => Some (lang.LitUnit)
-    | LitLoc l => Some (lang.LitLoc (lang.Loc l.(loc_car)))
-    | LitRAElem _ _ => None
+    | LitBool b => (lang.LitBool b) 
+    | LitInt i => (lang.LitInt i)
+    | LitUnit => (lang.LitUnit)
+    | LitLoc l => (lang.LitLoc (lang.Loc l.(loc_car)))
+    (* | LitRAElem _ _ => None *)
     end.
 
-    Global Parameter trnsl_pred : pred_name -> list LExpr -> iProp Σ.
-    Global Parameter trnsl_inv : inv_name -> list LExpr -> iProp Σ.
+    Global Parameter trnsl_pred : pred_name -> list LExpr -> symb_map -> iProp Σ.
+    Global Parameter trnsl_inv : inv_name -> list LExpr -> symb_map -> iProp Σ.
 
 
-    Fixpoint trnsl_assertion (a : assertion) : option (iProp Σ) := match a with
+    Fixpoint trnsl_assertion (a : assertion) (mp : symb_map): option (iProp Σ) := match a with
     | LExprA l_expr => 
-      Some (⌜LExpr_holds l_expr⌝%I)
+      Some (⌜LExpr_holds l_expr mp⌝%I)
       (* Some (⌜(e = (lang.Val (lang.LitBool true)))⌝) *)
     
     (* ⌜(trnsl_expressions l_expr) = Some (lang.Val (lang.LitBool true))⌝ *)
     | LPure p => Some (⌜ p ⌝%I)
     | LOwn l_expr fld chunk => 
-      (* TODO: Embed RAs properly and redefine this correctly *)
       match trnsl_lval chunk with
-      | Some chunk =>
-        Some (∃ l: lang.loc, (
-          ⌜LExpr_holds (LBinOp EqOp l_expr (LVal (LitLoc l)))⌝ ∗ 
-          (l#fld ↦{ 1 } chunk)
+      | chunk =>
+      Some (∃ l: lang.loc, (
+        ⌜LExpr_holds (LBinOp EqOp l_expr (LVal (LitLoc l))) mp⌝ ∗ 
+        (l#fld ↦{ 1 } chunk)
         )%I)%I
         (* (heap_maps_to l fld 1 chunk) *)
-      | None => None
-      end
+        end
+    (* TODO: Embed RAs properly and redefine this correctly *)
+    | LGhostOwn l_expr fld RAPack chunk =>
+      None 
     | LForall v body => 
-      match trnsl_assertion body with
+      match trnsl_assertion body mp with
       | None => None
       | Some body_expr => Some (∀ v':lang.val, body_expr)%I
       end
@@ -373,16 +546,16 @@ Section Translation.
       (* ∀ vs, (trnsl_assertion body) *)
       (* True *)
     | LExists v body => 
-      match trnsl_assertion body with
+      match trnsl_assertion body mp with
       | None => None
       | Some body_expr => Some (∃ v': lang.val, body_expr)%I
       end
     
     | LImpl cnd body => 
-      match (trnsl_assertion body) with
+      match (trnsl_assertion body mp) with
       | None => None
       | Some body_expr => 
-      Some (⌜LExpr_holds cnd⌝ -∗ body_expr)%I
+      Some (⌜LExpr_holds cnd mp⌝ -∗ body_expr)%I
       end
       (* True *)
     | LInv inv args => 
@@ -391,15 +564,15 @@ Section Translation.
         let subst_map := list_to_map (zip inv_record.(inv_args) args) in
         let subst_body := subst inv_record.(inv_body) subst_map in
 
-        Some (invariants.inv (inv_namespace_map inv) (trnsl_inv inv args))
+        Some (invariants.inv (inv_namespace_map inv) (trnsl_inv inv args mp))
 
         (* False *)
       | None => None
       end
       (* False *)
-    | LPred pred args => Some (trnsl_pred pred args)
+    | LPred pred args => Some (trnsl_pred pred args mp)
     | LAnd a1 a2 => 
-      match (trnsl_assertion a1), (trnsl_assertion a2) with
+      match (trnsl_assertion a1 mp), (trnsl_assertion a2 mp) with
       | None, _ => None
       | _, None => None
       | Some a1, Some a2 => Some (a1 ∗ a2)%I
@@ -407,34 +580,34 @@ Section Translation.
     end
     .
 
-  Axiom trnsl_pred_validity : forall (pred : pred_name) (args : list LExpr), 
+  Axiom trnsl_pred_validity : forall (pred : pred_name) (args : list LExpr) (mp : symb_map), 
     match pred_map !! pred with
     | Some pred_rec => 
       let subst_map := list_to_map (zip pred_rec.(pred_args) args) in
 
-      trnsl_assertion (subst pred_rec.(pred_body) subst_map) = Some (trnsl_pred pred args)
+      trnsl_assertion (subst pred_rec.(pred_body) subst_map) mp = Some (trnsl_pred pred args mp)
     | None => true
     end
   .
 
-  Axiom trnsl_inv_validity : forall (inv : inv_name) (args : list LExpr), 
+  Axiom trnsl_inv_validity : forall (inv : inv_name) (args : list LExpr) (mp : symb_map), 
     match inv_map !! inv with
     | Some inv_rec => 
       let subst_map := list_to_map (zip inv_rec.(inv_args) args) in
 
-      trnsl_assertion (subst inv_rec.(inv_body) subst_map) = Some (trnsl_inv inv args)
+      trnsl_assertion (subst inv_rec.(inv_body) subst_map) mp= Some (trnsl_inv inv args mp)
     | None => true
     end
   .
 
-  Definition entails P Q := ∃ P' Q', trnsl_assertion P = Some P' /\ trnsl_assertion Q = Some Q' /\ (P' ⊢  Q')%I.
+  Definition entails P Q := forall mp, ∃ P' Q', trnsl_assertion P mp = Some P' /\ trnsl_assertion Q mp = Some Q' /\ (P' ⊢  Q')%I.
 
-  Definition stack: Type := gmap var LExpr.
+  Definition stack: Type := gmap lang.var lvar.
 
   Fixpoint trnsl_expr_lExpr (stk: stack) (e: lang.expr) :=
   match e with
   | Var x => match stk !! x with
-             | Some v => Some v
+             | Some v => Some (LVar v)
              | None => None
              end
   | Val v => Some (LVal (trnsl_val v))
@@ -463,9 +636,9 @@ Section Translation.
   | Error
   | Some' (s: lang.stmt).
 
-  Fixpoint trnsl_stmt (s : stmt) (stk: stack) : trnsl_stmt_ret := match s with
+  Fixpoint trnsl_stmt (s : stmt) : trnsl_stmt_ret := match s with
   | Seq s1 s2 => 
-    match trnsl_stmt s1 stk, trnsl_stmt s2 stk with
+    match trnsl_stmt s1, trnsl_stmt s2 with
     | None', None' => None'
     | Some' s1, None' => Some' s1
     | None', Some' s2 => Some' s2
@@ -475,7 +648,7 @@ Section Translation.
     end
 
   | IfS e s1 s2 => 
-      match (trnsl_stmt s1 stk), (trnsl_stmt s2 stk) with
+      match (trnsl_stmt s1), (trnsl_stmt s2) with
       | None', None' => None'
       | Some' s1, None' => Some' (lang.IfS e s1 lang.SkipS)
       | None', Some' s2 => Some' (lang.IfS e lang.SkipS s2 )
@@ -488,7 +661,7 @@ Section Translation.
   | StuckS => Some' lang.StuckS
   | Call v proc args => None'
   (* Some (lang.Call v proc args) *)
-  | FldWr e1 fld e2 => Some' (lang.FldWr e1 fld e2)
+  | FldWr v fld e2 => Some' (lang.FldWr v fld e2)
   
   | FldRd v e1 fld => None'
   | CAS v e1 fld e2 e3 => None'
@@ -499,7 +672,7 @@ Section Translation.
   | FoldPred pred args => None'
   | UnfoldInv inv args => None'
   | FoldInv inv args => None'
-  | Fpu e fld old_val new_val => None'
+  | Fpu e fld RAPack old_val new_val => None'
   end.
 
 End Translation.
@@ -507,7 +680,7 @@ End Translation.
 
 Section RavenLogic.
 
-  Definition fresh_lvar (stk: stack) v := forall v', not (stk !! v' = Some (LVar v)). 
+  Definition fresh_lvar (stk: stack) v := forall v', not (stk !! v' = Some v). 
 
   Fixpoint field_list_to_assertion lexpr fld_vals  := match fld_vals with
   | [] => LPure true
@@ -526,7 +699,7 @@ Section RavenLogic.
     RavenHoareTriple 
       stk (LPure True) (mask, i1) 
         (Assign v e) 
-      (<[v := LVar v2]> stk) (LExprA (LBinOp EqOp (LVar v2) lexpr)) (mask, i2)
+      (<[v := v2]> stk) (LExprA (LBinOp EqOp (LVar v2) lexpr)) (mask, i2)
     
   
   | HeapReadRule stk i1 i2 mask x e val fld lexpr_e lvar_x  :
@@ -536,16 +709,16 @@ Section RavenLogic.
     RavenHoareTriple 
       stk (LOwn lexpr_e fld val) (mask, i1) 
         (FldRd x e fld)
-      (<[x := LVar lvar_x]> stk) (LAnd (LOwn lexpr_e fld val) (LExprA (LBinOp EqOp (LVar lvar_x) (LVal val)))) (mask, i2)
+      (<[x := lvar_x]> stk) (LAnd (LOwn lexpr_e fld val) (LExprA (LBinOp EqOp (LVar lvar_x) (LVal val)))) (mask, i2)
 
-  | HeapWriteRule stk i1 i2 mask e1 fld e2 old_val new_val lexpr1 :
+  | HeapWriteRule stk i1 i2 mask v fld e old_val new_val lv :
     oneAtomicStep i1 i2 ->
-    trnsl_expr_lExpr stk e1 = Some lexpr1 ->
-    trnsl_expr_lExpr stk e2 = Some (LVal new_val) ->
+    stk !! v = Some lv ->
+    trnsl_expr_lExpr stk e = Some (LVal new_val) ->
     RavenHoareTriple
-      stk (LOwn lexpr1 fld old_val) (mask, i1)
-        (FldWr e1 fld e2)
-      stk (LOwn lexpr1 fld new_val) (mask, i2)
+      stk (LOwn (LVar lv) fld old_val) (mask, i1)
+        (FldWr v fld e)
+      stk (LOwn (LVar lv) fld new_val) (mask, i2)
     
   | HeapAllocRule stk i1 i2 mask x fld_vals lvar_x :
     oneAtomicStep i1 i2 ->
@@ -553,7 +726,7 @@ Section RavenLogic.
     RavenHoareTriple
       stk (LPure true) (mask, i1)
         (Alloc (Var x) fld_vals)
-      (<[x := LVar lvar_x]> stk) (field_list_to_assertion (LVar lvar_x) fld_vals) (mask, i2)
+      (<[x := lvar_x]> stk) (field_list_to_assertion (LVar lvar_x) fld_vals) (mask, i2)
 
   | ProcCallRuleRet stk i mask x proc_name args lexprs lvar_x proc_record :
     i = Closed ->
@@ -565,7 +738,7 @@ Section RavenLogic.
     RavenHoareTriple
       stk (subst proc_record.(proc_precond) subst_map) (mask, i)
         (Call x proc_name args)
-      (<[x := LVar lvar_x]> stk) (subst proc_record.(proc_postcond) (<[ proc_record.(ret_var) := LVar lvar_x]> subst_map)) (mask, i)
+      (<[x := lvar_x]> stk) (subst proc_record.(proc_postcond) (<[ proc_record.(ret_var) := LVar lvar_x]> subst_map)) (mask, i)
 
   | SequenceRule stk1 i1 mask1 a1 c1 stk2 i2 mask2 a2 c2 stk3 i3 mask3 a3 :
     RavenHoareTriple
@@ -670,9 +843,9 @@ Section RavenLogic.
     trnsl_expr_lExpr stk e = Some l_expr ->
     (RAPack.(RA_inst) ).(fpuValid) old_val new_val = true ->
     RavenHoareTriple
-      stk (LOwn l_expr fld (LitRAElem RAPack old_val)) (mask, i)
-        (Fpu e fld (LitRAElem RAPack old_val) (LitRAElem RAPack new_val))
-        stk (LOwn l_expr fld (LitRAElem RAPack new_val)) (mask, i)
+      stk (LGhostOwn l_expr fld RAPack old_val) (mask, i)
+        (Fpu e fld RAPack old_val new_val)
+        stk (LGhostOwn l_expr fld RAPack new_val) (mask, i)
 
   | WeakeningRule stk1 stk2 i1 i2 mask1 mask2 p p' q q' c :
     RavenHoareTriple 
@@ -705,7 +878,7 @@ Section RavenLogic.
       RavenHoareTriple
         stk (LOwn lexpr1 fld old_val) (mask, i1)
           (CAS v e1 fld e2 e3)
-        (<[v := LVar lvar_v]> stk) (LAnd (LOwn lexpr1 fld new_val) (LExprA (LBinOp EqOp (LVar lvar_v) (LVal (LitBool true))))) (mask, i2)
+        (<[v := lvar_v]> stk) (LAnd (LOwn lexpr1 fld new_val) (LExprA (LBinOp EqOp (LVar lvar_v) (LVal (LitBool true))))) (mask, i2)
 
   | CASFailRule stk i1 i2 mask v e1 fld e2 e3 lvar_v lexpr1 old_val old_val2 :
     oneAtomicStep i1 i2 ->
@@ -716,7 +889,7 @@ Section RavenLogic.
       RavenHoareTriple
         stk (LAnd (LOwn lexpr1 fld old_val) (LExprA (LUnOp NotBoolOp (LBinOp EqOp (LVal old_val) (LVal old_val2))))) (mask, i1) 
           (CAS v e1 fld e2 e3)
-        (<[v := LVar lvar_v]> stk) (LAnd (LOwn lexpr1 fld old_val) (LExprA (LBinOp EqOp (LVar lvar_v) (LVal (LitBool false))))) (mask, i2)
+        (<[v := lvar_v]> stk) (LAnd (LOwn lexpr1 fld old_val) (LExprA (LBinOp EqOp (LVar lvar_v) (LVal (LitBool false))))) (mask, i2)
         
   .
 
@@ -724,12 +897,26 @@ End RavenLogic.
 
 Section LExpr_embed.
   (* TODO: Figure out the right way to do this deep embedding *)
-  Axiom EqOp_refl : forall a b, LExpr_holds (LBinOp EqOp a b) -> LExpr_holds (LBinOp EqOp b a).
+  Definition EqOp_refl : forall a b mp, LExpr_holds (LBinOp EqOp a b) mp -> LExpr_holds (LBinOp EqOp b a) mp.
+  Proof.
+    intros.
+    unfold LExpr_holds.
+    destruct (interp_lexpr a mp) eqn: H0, (interp_lexpr b mp) eqn:H1 ; try done.
+    unfold LExpr_holds in H. rewrite H0 in H. rewrite H1 in H. rewrite H. reflexivity.
+  Qed.
 
-  Axiom EqOp_trans : forall a b c, LExpr_holds (LBinOp EqOp a b) -> LExpr_holds (LBinOp EqOp b c) -> LExpr_holds (LBinOp EqOp a c).
 
-  Axiom EqOp_subst : forall var le e, LExpr_holds (LBinOp EqOp (LVar var) le) -> LExpr_holds e -> LExpr_holds (lexpr_subst e (<[ var := le]> ∅)).
 
-  Axiom EqpOp_LVal : forall v1 v2, LExpr_holds (LBinOp EqOp (LVal v1) (LVal v2)) -> v1 = v2.
+  Definition EqOp_trans : forall a b c mp, LExpr_holds (LBinOp EqOp a b) mp -> LExpr_holds (LBinOp EqOp b c) mp -> LExpr_holds (LBinOp EqOp a c) mp.
+  Proof.
+    Admitted.
+
+  Definition EqOp_subst : forall var le e mp, LExpr_holds (LBinOp EqOp (LVar var) le) mp -> LExpr_holds e mp -> LExpr_holds (lexpr_subst e (<[ var := le]> ∅)) mp.
+  Proof.
+    Admitted.
+
+  Definition EqpOp_LVal : forall v1 v2 mp, LExpr_holds (LBinOp EqOp (LVal v1) (LVal v2)) mp -> v1 = v2.
+  Proof.
+    Admitted.
 
 End LExpr_embed.

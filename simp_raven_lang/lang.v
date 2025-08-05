@@ -64,7 +64,7 @@ Inductive stmt :=
 | StuckS (* stuck statement *)
 (* | ExprS (e : expr) *)
 | Call (v : var) (proc : proc_name) (args : list expr)
-| FldWr (e1 : expr) (fld : fld_name) (e2 : expr) 
+| FldWr (v : var) (fld : fld_name) (e2 : expr) 
 | FldRd (v : var) (e : expr) (fld : fld_name)
 | CAS (v : var)(e1 : expr) (fld : fld_name) (e2 : expr) (e3 : expr)
 | Alloc (v : var) (fs: list (fld_name * val))
@@ -195,7 +195,7 @@ Fixpoint subst_stmt (s : stmt) (subst : list (var * expr)) : stmt :=
   | StuckS => StuckS
   (* | ExprS e => ExprS (subst_expr e subst) *)
   | Call v proc args => Call v proc (map (λ e, subst_expr e subst) args)
-  | FldWr e1 f e2 => FldWr (subst_expr e1 subst) f (subst_expr e2 subst)
+  | FldWr v f e2 => FldWr v f (subst_expr e2 subst)
   | FldRd v e f => FldRd v e f
   | CAS vr e1 f e2 e3 => CAS vr (subst_expr e1 subst) f (subst_expr e2 subst) (subst_expr e3 subst)
   | Alloc v fs => Alloc v fs
@@ -219,7 +219,7 @@ Inductive runtime_stmt :=
 | RTVal (v : val)
 | RTCall (v : var) (proc : proc_name) (args : list expr) (stk_id : stack_id)
 | RTActiveCall (v : var) (s : runtime_stmt) (callee_stk_id : stack_id) (caller_stk_id : stack_id) 
-| RTFldWr (e1 : expr) (fld : fld_name) (e2 : expr) (stk_id : stack_id)
+| RTFldWr (v : var) (fld : fld_name) (e : expr) (stk_id : stack_id)
 | RTFldRd (v : var) (e : expr) (fld : fld_name) (stk_id : stack_id)
 | RTCAS (v : var) (e1 : expr) (fld : fld_name) (e2 : expr) (e3 : expr) (stk_id : stack_id)
 | RTAlloc (v : var) (fs : list (fld_name * val)) (stk_id : stack_id)
@@ -259,7 +259,7 @@ match s with
 | StuckS => RTStuckS (* stuck statement *)
 (* | ExprS (e : expr) *)
 | Call v proc args => RTCall v proc args stk_id 
-| FldWr e1 fld e2 => RTFldWr e1 fld e2 stk_id
+| FldWr v fld e => RTFldWr v fld e stk_id
 | FldRd v e fld => RTFldRd v e fld stk_id
 | CAS v e1 fld e2 e3 => RTCAS v e1 fld e2 e3 stk_id
 | Alloc v fs => RTAlloc v fs stk_id
@@ -346,12 +346,12 @@ Inductive runtime_step : runtime_stmt → state → list Empty_set → runtime_s
   runtime_step (RTCall v proc args stk_id) σ [] 
   (RTActiveCall v new_stmt new_stk_id stk_id) σ'' []
 
-| FldWrStep σ stk_id stk_frm e1 fld e2 l v:
+| FldWrStep σ stk_id stk_frm v fld e l val:
   σ.(stack) !! stk_id = Some stk_frm ->
-  expr_step e1 stk_frm (Val (LitLoc l)) ->
-  expr_step e2 stk_frm (Val v) ->
-  let σ' := update_heap σ l fld v in
-  runtime_step (RTFldWr e1 fld e2 stk_id) σ [] (RTVal LitUnit) σ' []
+  stk_frm.(locals) !! v = Some (LitLoc l) ->
+  expr_step e stk_frm (Val val) ->
+  let σ' := update_heap σ l fld val in
+  runtime_step (RTFldWr v fld e stk_id) σ [] (RTVal LitUnit) σ' []
 
 | FldRdStep σ stk_id stk_frm v e fld l v2 :
   σ.(stack) !! stk_id = Some stk_frm ->

@@ -38,10 +38,10 @@ Section lifting.
 
   Context `{!simpLangG Σ}.
 
-  Lemma wp_heap_wr stk_id stk_frm e0 e v l f x:
-    {{{ stack_own[ stk_id, stk_frm] ∗ l#f ↦{1%Qp} x ∗ ⌜expr_step e0 stk_frm (Val (LitLoc l))⌝ ∗ ⌜expr_step e stk_frm (Val v)⌝}}}
-      (RTFldWr e0 f e stk_id)
-    {{{RET LitUnit; stack_own[ stk_id, stk_frm] ∗ l#f ↦{1%Qp} v}}}.
+  Lemma wp_heap_wr stk_id stk_frm v e val l f x:
+    {{{ stack_own[ stk_id, stk_frm] ∗ l#f ↦{1%Qp} x ∗ ⌜stk_frm.(locals) !! v = Some (LitLoc l)⌝ ∗ ⌜expr_step e stk_frm (Val val)⌝}}}
+      (RTFldWr v f e stk_id)
+    {{{RET LitUnit; stack_own[ stk_id, stk_frm] ∗ l#f ↦{1%Qp} val}}}.
     (* Unset Printing Notations. *)
   Proof.
     iIntros (Φ) "[Hstk [Hl [%He %He2]]] HΦ" .
@@ -51,9 +51,9 @@ Section lifting.
     iPoseProof (stack_interp_agreement with "Hstack Hstk ") as "%HstkPure".
     iModIntro. iSplit. 
     - unfold base_reducible. 
-      iExists [], (RTVal LitUnit), (update_heap σ l f v), [].
+      iExists [], (RTVal LitUnit), (update_heap σ l f val), [].
       iPureIntro.
-      apply (FldWrStep σ stk_id stk_frm _ f e l v); try done.
+      apply (FldWrStep σ stk_id stk_frm _ f e l val); try done.
       
       
 
@@ -63,24 +63,26 @@ Section lifting.
       |  |  |  |  |  |  ]; subst κ efs σ2 σ0 fld stk_id0 e' e1 e2; simpl; iFrame.
       
       assert (l = l0) as Hlsubst. 
-        { rewrite  HstkPure in Hstk_frm0. injection Hstk_frm0 as Hstk_frm0. subst stk_frm0. 
+        { 
+          rewrite  HstkPure in Hstk_frm0. injection Hstk_frm0 as Hstk_frm0. subst stk_frm0. 
         
-        assert (LitLoc l = LitLoc l0 -> l = l0) as H0. { intros Htemp; inversion Htemp; done. }
+        assert (Some (LitLoc l) = Some (LitLoc l0) -> l = l0) as H0. { intros Htemp; inversion Htemp; done. }
 
         apply H0.
 
-
-        apply (expr_step_val_unique e0 stk_frm (LitLoc l) (LitLoc l0)); done. } subst l0.
+        rewrite <- Hl0.
+        rewrite He. done.
+        } subst l0.
       assert (stk_frm0 = stk_frm) as Hstkfrm_subst. { 
           rewrite HstkPure in Hstk_frm0.  
           injection Hstk_frm0 as Hstk_frm0; try done.
       } subst stk_frm0. 
-      assert (v = v0) as Hvsubst. 
+      assert (val = v0) as Hvsubst. 
         { apply (expr_step_val_unique _ _ _ _ He2 Hv0). } subst v0.
       
       iCombine "Hhp Hl" as "Hcomb".
       iSplitR; first done.
-      iPoseProof (own_update heap_heap_name _ _ (heap_update _ _ _ _ v) with "Hcomb") as "Hcomb".
+      iPoseProof (own_update heap_heap_name _ _ (heap_update _ _ _ _ val) with "Hcomb") as "Hcomb".
       iMod "Hcomb" as "Hcomb".
       iDestruct "Hcomb" as "[Hauth Hfrag]".
       iModIntro.
