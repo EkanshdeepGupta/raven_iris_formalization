@@ -108,7 +108,7 @@ Section MainTranslation.
     Lemma trnsl_expr_interp_lexpr_compatibility stk e lv mp : trnsl_expr_lExpr stk e = Some (LVal lv) -> expr_step e (symb_stk_to_stk_frm stk mp) (Val (trnsl_lval lv)).
     Admitted.
 
-    Definition trnsl_hoare_triple (stk : stack) (stk_id: stack_id) (p : assertion) (a1 : AtomicAnnotation) (cmd : stmt) (stk' : stack) (q : assertion) (a2 : AtomicAnnotation) (mp : symb_map) : iProp rrl_lang.Σ :=
+    Definition trnsl_hoare_triple (stk : stack) (stk_id: stack_id) (p : assertion) (msk1 : maskAnnot) (cmd : stmt) (stk' : stack) (q : assertion) (msk2 : maskAnnot) (mp : symb_map) : iProp rrl_lang.Σ :=
         match (trnsl_stmt cmd) with 
         | Error => True
         | None' =>
@@ -131,15 +131,15 @@ Section MainTranslation.
         end
     .
   
-    Theorem rrl_validity stk stk_id p a1 cmd stk' q a2 :
-      forall mp, RavenHoareTriple stk p a1 cmd stk' q a2 ->
-      ⊢ (trnsl_hoare_triple stk stk_id p a1 cmd stk' q a2 mp).
+    Theorem rrl_validity stk stk_id p msk1 cmd stk' q msk2 :
+      forall mp, RavenHoareTriple stk p msk1 cmd stk' q msk2 ->
+      ⊢ (trnsl_hoare_triple stk stk_id p msk1 cmd stk' q msk2 mp).
     Proof.
       intros mp H.
       destruct H as 
       [ | 
-      | stk i1 i2 mask v fld e old_val new_val lv Hatm HLexpr1 HLexpr2 
-      | | | | | | | | | | | | | | ].
+      | stk mask v fld e old_val new_val lv Hatm HLexpr1 
+      | | | | | | | | | | | | | ].
       3: {
         unfold trnsl_hoare_triple.
         destruct (trnsl_stmt (FldWr v fld e)) eqn:Ht. 2: done.
@@ -153,20 +153,24 @@ Section MainTranslation.
         iDestruct "Hstk1" as "[%l [%Hlexpr1 Hlfld]]".
         
         iApply (wp_heap_wr stk_id (symb_stk_to_stk_frm stk mp) _ _ _ l _ _ with "[Hstk2 Hlfld]").
+        
+        {
+          iFrame.
+          iSplit.
+          { iPureIntro. simpl. rewrite lookup_fmap. 
+            (* rewrite HLexpr. simpl. apply f_equal.  *)
+            rewrite Hatm. simpl. rewrite Hlexpr1. simpl. apply f_equal. 
 
+            destruct l. simpl. done. 
+          }
 
-        2: {
+          { iPureIntro. apply trnsl_expr_interp_lexpr_compatibility. done. }
+        }
+
+        {
           iModIntro. iIntros "[HstkO Hlpt]".
           iApply "HΦ". iFrame.
           iPureIntro. done.
-        }
-        
-        1: {
-          iFrame.
-          iSplit.
-          { iPureIntro. simpl. rewrite lookup_fmap. rewrite HLexpr1. simpl. apply f_equal. rewrite Hlexpr1. simpl. apply f_equal. destruct l. simpl. done. }
-
-          { iPureIntro. apply trnsl_expr_interp_lexpr_compatibility. done. }
         }
   
     Admitted.

@@ -343,8 +343,9 @@ Inductive stmt :=
 | Spawn (proc : proc_name) (args : list lang.expr)
 | UnfoldPred (pred : pred_name) (args : list lang.expr)
 | FoldPred (pred : pred_name) (args : list lang.expr)
-| UnfoldInv (inv: inv_name) (args : list lang.expr)
-| FoldInv (inv: inv_name) (args : list lang.expr)
+| InvAccessBlock (inv: inv_name) (args : list lang.expr) (body : stmt)
+(* | UnfoldInv (inv: inv_name) (args : list lang.expr)
+| FoldInv (inv: inv_name) (args : list lang.expr) *)
 | Fpu (e : lang.expr) (fld : fld_name) (RAPack : RA_Pack) (old_val : RA_carrier RAPack) (new_val : RA_carrier RAPack)
 .
 
@@ -468,14 +469,20 @@ Inductive stmt_well_defined : stmt -> Prop :=
     pred ∈ pred_set ->
     Forall (fun arg => expr_well_defined arg) args ->
     stmt_well_defined (FoldPred pred args)
-| UnfoldInvTp inv args : 
+| InvAccessBlockTp inv args stmt:
+    inv ∈ inv_set ->
+    Forall (fun arg => expr_well_defined arg) args ->
+    stmt_well_defined stmt ->
+    stmt_well_defined (InvAccessBlock inv args stmt)
+
+(* | UnfoldInvTp inv args : 
     inv ∈ inv_set -> 
     Forall (fun arg => expr_well_defined arg) args ->
     stmt_well_defined (UnfoldInv inv args)
 | FoldInvTp inv args : 
     inv ∈ inv_set ->
     Forall (fun arg => expr_well_defined arg) args ->
-    stmt_well_defined (FoldInv inv args)
+    stmt_well_defined (FoldInv inv args) *)
 | FpuTp e fld RAPack old_val new_val : 
     fld ∈ fld_set ->
     expr_well_defined e ->
@@ -495,11 +502,13 @@ Section AtomicAnnotations.
 
   Definition AtomicAnnotation : Type := (gset inv_name * AtomicStep).
 
-  Definition oneAtomicStep i1 i2 := match i1, i2 with
+  Definition maskAnnot : Type := gset inv_name.
+
+  (* Definition oneAtomicStep  := match i1, i2 with
   | Closed, Closed => true
   | (Opened s1), (Stepped s2) => bool_decide (s1 = s2)
   | _, _ => false
-  end.
+  end. *)
 End AtomicAnnotations.
 
 Section Translation.
@@ -670,8 +679,9 @@ Section Translation.
   
   | UnfoldPred pred args => None'
   | FoldPred pred args => None'
-  | UnfoldInv inv args => None'
-  | FoldInv inv args => None'
+  | InvAccessBlock inv args body => trnsl_stmt body
+  (* | UnfoldInv inv args => None'
+  | FoldInv inv args => None' *)
   | Fpu e fld RAPack old_val new_val => None'
   end.
 
@@ -688,103 +698,102 @@ Section RavenLogic.
   end.
 
   Inductive RavenHoareTriple : 
-  stack -> assertion -> AtomicAnnotation -> 
+  stack -> assertion -> maskAnnot -> 
       stmt -> 
-  stack -> assertion -> AtomicAnnotation -> Prop :=
+  stack -> assertion -> maskAnnot -> Prop :=
 
-  | VarAssignmentRule stk i1 i2 mask v v2 e lexpr :
-    oneAtomicStep i1 i2 ->
+  | VarAssignmentRule stk mask v v2 e lexpr :
     trnsl_expr_lExpr stk e = Some lexpr ->
     fresh_lvar stk v2 ->
     RavenHoareTriple 
-      stk (LPure True) (mask, i1) 
+      stk (LPure True) mask 
         (Assign v e) 
-      (<[v := v2]> stk) (LExprA (LBinOp EqOp (LVar v2) lexpr)) (mask, i2)
+      (<[v := v2]> stk) (LExprA (LBinOp EqOp (LVar v2) lexpr)) mask
     
   
-  | HeapReadRule stk i1 i2 mask x e val fld lexpr_e lvar_x  :
-    oneAtomicStep i1 i2 ->
+  | HeapReadRule stk mask x e val fld lexpr_e lvar_x  :
     trnsl_expr_lExpr stk e = Some lexpr_e ->
     fresh_lvar stk lvar_x ->
     RavenHoareTriple 
-      stk (LOwn lexpr_e fld val) (mask, i1) 
+      stk (LOwn lexpr_e fld val) mask 
         (FldRd x e fld)
-      (<[x := lvar_x]> stk) (LAnd (LOwn lexpr_e fld val) (LExprA (LBinOp EqOp (LVar lvar_x) (LVal val)))) (mask, i2)
+      (<[x := lvar_x]> stk) (LAnd (LOwn lexpr_e fld val) (LExprA (LBinOp EqOp (LVar lvar_x) (LVal val)))) mask
 
-  | HeapWriteRule stk i1 i2 mask v fld e old_val new_val lv :
-    oneAtomicStep i1 i2 ->
+  | HeapWriteRule stk mask v fld e old_val new_val lv :
     stk !! v = Some lv ->
     trnsl_expr_lExpr stk e = Some (LVal new_val) ->
     RavenHoareTriple
-      stk (LOwn (LVar lv) fld old_val) (mask, i1)
+      stk (LOwn (LVar lv) fld old_val) mask
         (FldWr v fld e)
-      stk (LOwn (LVar lv) fld new_val) (mask, i2)
+      stk (LOwn (LVar lv) fld new_val) mask
     
-  | HeapAllocRule stk i1 i2 mask x fld_vals lvar_x :
-    oneAtomicStep i1 i2 ->
+  | HeapAllocRule stk mask x fld_vals lvar_x :
     fresh_lvar stk lvar_x ->
     RavenHoareTriple
-      stk (LPure true) (mask, i1)
+      stk (LPure true) mask
         (Alloc (Var x) fld_vals)
-      (<[x := lvar_x]> stk) (field_list_to_assertion (LVar lvar_x) fld_vals) (mask, i2)
+      (<[x := lvar_x]> stk) (field_list_to_assertion (LVar lvar_x) fld_vals) mask
 
-  | ProcCallRuleRet stk i mask x proc_name args lexprs lvar_x proc_record :
-    i = Closed ->
+  | ProcCallRuleRet stk mask x proc_name args lexprs lvar_x proc_record :
     fresh_lvar stk lvar_x ->
     proc_map !! proc_name = Some proc_record ->
     length args = length proc_record.(proc_args) ->
     (map (fun arg => trnsl_expr_lExpr stk arg) args) = (map (fun lexpr => Some lexpr) lexprs) ->
     let subst_map := list_to_map (zip proc_record.(proc_args) lexprs) in
     RavenHoareTriple
-      stk (subst proc_record.(proc_precond) subst_map) (mask, i)
+      stk (subst proc_record.(proc_precond) subst_map) mask
         (Call x proc_name args)
-      (<[x := lvar_x]> stk) (subst proc_record.(proc_postcond) (<[ proc_record.(ret_var) := LVar lvar_x]> subst_map)) (mask, i)
+      (<[x := lvar_x]> stk) (subst proc_record.(proc_postcond) (<[ proc_record.(ret_var) := LVar lvar_x]> subst_map)) mask
 
-  | SequenceRule stk1 i1 mask1 a1 c1 stk2 i2 mask2 a2 c2 stk3 i3 mask3 a3 :
+  | SequenceRule stk1 mask1 a1 c1 stk2 mask2 a2 c2 stk3 mask3 a3 :
     RavenHoareTriple
-      stk1 a1 (mask1, i1)
+      stk1 a1 mask1
         c1
-      stk2 a2 (mask2, i2)
+      stk2 a2 mask2
     ->
     RavenHoareTriple
-      stk2 a2 (mask2, i2)
+      stk2 a2 mask2
         c2
-      stk3 a3 (mask3, i3)
+      stk3 a3 mask3
     ->
     RavenHoareTriple
-      stk1 a1 (mask1, i1)
+      stk1 a1 mask1
         (Seq c1 c2)
-      stk3 a3 (mask3, i3)
+      stk3 a3 mask3
 
-  | CondRule stk1 stk2 i1 i2 mask1 mask2 e s1 s2 p q lexpr :
+  | CondRule stk1 stk2 mask1 mask2 e s1 s2 p q lexpr :
     trnsl_expr_lExpr stk1 e = Some lexpr ->
     RavenHoareTriple
-      stk1 (LAnd p (LExprA (lexpr))) (mask1, i1)
+      stk1 (LAnd p (LExprA (lexpr))) mask1
         s1
-      stk2 q (mask2, i2)
+      stk2 q mask2
     ->
     RavenHoareTriple
-      stk1 (LAnd p (LExprA (LUnOp NotBoolOp lexpr))) (mask1, i1)
+      stk1 (LAnd p (LExprA (LUnOp NotBoolOp lexpr))) mask1
         s2
-      stk2 q (mask2, i2)
+      stk2 q mask2
     ->
     RavenHoareTriple
-      stk1 p (mask1, i1)
+      stk1 p mask1
         (IfS e s1 s2)
-      stk2 q (mask2, i2)
+      stk2 q mask2
 
-  | FrameRule stk1 stk2 i1 i2 mask1 mask2 s p q r :
+  | InvAccessBlockRule stk mask inv args stmt inv_record p q lexprs :
+    (map (fun arg => trnsl_expr_lExpr stk arg) args) = (map (fun lexpr => Some lexpr) lexprs) ->
+    inv ∈ mask ->
+    inv_map !! inv = Some inv_record ->
+    let subst_map := list_to_map (zip inv_record.(inv_args) lexprs) in
     RavenHoareTriple
-      stk1 p (mask1, i1)
-        s
-      stk2 q (mask2, i2)
-    ->
+      stk (LAnd (subst inv_record.(inv_body) subst_map) p) (mask ∖ {[inv]})
+        stmt 
+      stk (LAnd (subst inv_record.(inv_body) subst_map) q) (mask ∖ {[inv]}) ->
+    
     RavenHoareTriple
-      stk1 (LAnd p r) (mask1, i1)
-        s
-      stk2 (LAnd q r) (mask2, i2)
+      stk (LAnd (LInv inv lexprs) p) mask
+        (InvAccessBlock inv args stmt )
+      stk (LAnd (LInv inv lexprs) q) mask
 
-  | InvUnfoldRule stk i1 i2 mask1 inv args inv_record lexprs :
+  (* | InvUnfoldRule stk  mask1 inv args inv_record lexprs :
     (map (fun arg => trnsl_expr_lExpr stk arg) args) = (map (fun lexpr => Some lexpr) lexprs) ->
     match i1, i2 with
       | Closed, Opened s => s = [ (inv, lexprs) ]
@@ -799,9 +808,9 @@ Section RavenLogic.
     RavenHoareTriple
       stk (LInv inv lexprs) (mask1, i1)
         (UnfoldInv inv args) 
-      stk (subst inv_record.(inv_body) subst_map) (mask1 ∖ {[inv]}, i2)
+      stk (subst inv_record.(inv_body) subst_map) (mask1 ∖ {[inv]}, i2) *)
 
-  | InvFoldRule stk i1 i2 mask1 inv args inv_record lexprs :
+  (* | InvFoldRule stk  mask1 inv args inv_record lexprs :
     (map (fun arg => trnsl_expr_lExpr stk arg) args) = (map (fun lexpr => Some lexpr) lexprs) ->
     match i1, i2 with
     | Opened s, Closed => s = [ (inv, lexprs) ]
@@ -817,80 +826,87 @@ Section RavenLogic.
     RavenHoareTriple
       stk (subst inv_record.(inv_body) subst_map) (mask1, i1)
         (UnfoldInv inv args) 
-      stk (LInv inv lexprs) (mask1 ∪ {[inv]}, i2)
+      stk (LInv inv lexprs) (mask1 ∪ {[inv]}, i2) *)
 
-  | PredUnfoldRule stk i mask pred args pred_record lexprs :
+  | PredUnfoldRule stk mask pred args pred_record lexprs :
     (map (fun arg => trnsl_expr_lExpr stk arg) args) = (map (fun lexpr => Some lexpr) lexprs)
     ->
     pred_map !! pred = Some pred_record ->
     let subst_map := list_to_map (zip pred_record.(pred_args) lexprs) in
     RavenHoareTriple
-      stk (LPred pred lexprs) (mask, i)
+      stk (LPred pred lexprs) mask
         (UnfoldPred pred args) 
-      stk (subst pred_record.(pred_body) subst_map) (mask, i)
+      stk (subst pred_record.(pred_body) subst_map) mask
 
-  | PredFoldRule stk i mask pred args pred_record lexprs :
+  | PredFoldRule stk mask pred args pred_record lexprs :
     (map (fun arg => trnsl_expr_lExpr stk arg) args) = (map (fun lexpr => Some lexpr) lexprs)
     ->
     pred_map !! pred = Some pred_record ->
     let subst_map := list_to_map (zip pred_record.(pred_args) lexprs) in
     RavenHoareTriple
-      stk (subst pred_record.(pred_body) subst_map) (mask, i)
+      stk (subst pred_record.(pred_body) subst_map) mask
         (FoldPred pred args) 
-      stk (LPred pred lexprs) (mask, i)
+      stk (LPred pred lexprs) mask
 
-  | FPURule stk i mask e l_expr fld RAPack old_val new_val :
+  | FPURule stk mask e l_expr fld RAPack old_val new_val :
     trnsl_expr_lExpr stk e = Some l_expr ->
     (RAPack.(RA_inst) ).(fpuValid) old_val new_val = true ->
     RavenHoareTriple
-      stk (LGhostOwn l_expr fld RAPack old_val) (mask, i)
+      stk (LGhostOwn l_expr fld RAPack old_val) mask
         (Fpu e fld RAPack old_val new_val)
-        stk (LGhostOwn l_expr fld RAPack new_val) (mask, i)
+        stk (LGhostOwn l_expr fld RAPack new_val) mask
 
-  | WeakeningRule stk1 stk2 i1 i2 mask1 mask2 p p' q q' c :
+  | FrameRule stk1 stk2 mask1 mask2 s p q r :
+    RavenHoareTriple
+      stk1 p mask1
+        s
+      stk2 q mask2
+    ->
+    RavenHoareTriple
+      stk1 (LAnd p r) mask1
+        s
+      stk2 (LAnd q r) mask2
+  
+  | WeakeningRule stk1 stk2  mask1 mask2 p p' q q' c :
     RavenHoareTriple 
-      stk1 p (mask1, i1)
+      stk1 p mask1
         c
-      stk2 q (mask2, i2)
+      stk2 q mask2
     ->
     entails p' p ->
     entails q q' ->
 
     RavenHoareTriple 
-      stk1 p' (mask1, i1)
+      stk1 p' mask1
         c
-      stk2 q' (mask2, i2)
+      stk2 q' mask2
 
-  | SkipRule stk i1 i2 mask p :
-    oneAtomicStep i1 i2 ->
+  | SkipRule stk mask p :
     RavenHoareTriple
-      stk p (mask, i1)
+      stk p mask
         SkipS
-      stk p (mask, i2)
+      stk p mask
 
-  | CASSuccRule stk i1 i2 mask v e1 fld e2 e3 lvar_v lexpr1 old_val new_val :
-    oneAtomicStep i1 i2 ->
+  | CASSuccRule stk mask v e1 fld e2 e3 lvar_v lexpr1 old_val new_val :
     fresh_lvar stk lvar_v ->
     trnsl_expr_lExpr stk e1 = Some lexpr1 ->
     trnsl_expr_lExpr stk e2 = Some (LVal old_val) ->
     trnsl_expr_lExpr stk e3 = Some (LVal new_val) 
     ->
       RavenHoareTriple
-        stk (LOwn lexpr1 fld old_val) (mask, i1)
+        stk (LOwn lexpr1 fld old_val) mask
           (CAS v e1 fld e2 e3)
-        (<[v := lvar_v]> stk) (LAnd (LOwn lexpr1 fld new_val) (LExprA (LBinOp EqOp (LVar lvar_v) (LVal (LitBool true))))) (mask, i2)
+        (<[v := lvar_v]> stk) (LAnd (LOwn lexpr1 fld new_val) (LExprA (LBinOp EqOp (LVar lvar_v) (LVal (LitBool true))))) mask
 
-  | CASFailRule stk i1 i2 mask v e1 fld e2 e3 lvar_v lexpr1 old_val old_val2 :
-    oneAtomicStep i1 i2 ->
+  | CASFailRule stk mask v e1 fld e2 e3 lvar_v lexpr1 old_val old_val2 :
     fresh_lvar stk lvar_v ->
     trnsl_expr_lExpr stk e1 = Some lexpr1 ->
     trnsl_expr_lExpr stk e2 = Some (LVal old_val2)
     ->
       RavenHoareTriple
-        stk (LAnd (LOwn lexpr1 fld old_val) (LExprA (LUnOp NotBoolOp (LBinOp EqOp (LVal old_val) (LVal old_val2))))) (mask, i1) 
+        stk (LAnd (LOwn lexpr1 fld old_val) (LExprA (LUnOp NotBoolOp (LBinOp EqOp (LVal old_val) (LVal old_val2))))) mask 
           (CAS v e1 fld e2 e3)
-        (<[v := lvar_v]> stk) (LAnd (LOwn lexpr1 fld old_val) (LExprA (LBinOp EqOp (LVar lvar_v) (LVal (LitBool false))))) (mask, i2)
-        
+        (<[v := lvar_v]> stk) (LAnd (LOwn lexpr1 fld old_val) (LExprA (LBinOp EqOp (LVar lvar_v) (LVal (LitBool false))))) mask
   .
 
 End RavenLogic.
