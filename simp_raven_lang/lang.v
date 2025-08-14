@@ -66,7 +66,7 @@ Inductive stmt :=
 | Call (v : var) (proc : proc_name) (args : list expr)
 | FldWr (v : var) (fld : fld_name) (e2 : expr) 
 | FldRd (v : var) (e : expr) (fld : fld_name)
-| CAS (v : var)(e1 : expr) (fld : fld_name) (e2 : expr) (e3 : expr)
+| CAS (v : var) (e1 : expr) (fld : fld_name) (e2 : expr) (e3 : expr)
 | Alloc (v : var) (fs: list (fld_name * val))
 | Spawn (proc : proc_name) (args : list expr)
 .

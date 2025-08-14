@@ -38,9 +38,9 @@ Section lifting.
 
   Context `{!simpLangG Σ}.
 
-  Lemma wp_heap_wr stk_id stk_frm v e val l f x:
+  Lemma wp_heap_wr stk_id stk_frm v e val l f x msk :
     {{{ stack_own[ stk_id, stk_frm] ∗ l#f ↦{1%Qp} x ∗ ⌜stk_frm.(locals) !! v = Some (LitLoc l)⌝ ∗ ⌜expr_step e stk_frm (Val val)⌝}}}
-      (RTFldWr v f e stk_id)
+      (RTFldWr v f e stk_id) @ msk
     {{{RET LitUnit; stack_own[ stk_id, stk_frm] ∗ l#f ↦{1%Qp} val}}}.
     (* Unset Printing Notations. *)
   Proof.
@@ -54,7 +54,6 @@ Section lifting.
       iExists [], (RTVal LitUnit), (update_heap σ l f val), [].
       iPureIntro.
       apply (FldWrStep σ stk_id stk_frm _ f e l val); try done.
-      
       
 
     - iNext. iIntros (e2 σ2 efs) "%H Hcred".
@@ -96,9 +95,9 @@ Section lifting.
 
   (* Lemma wp_assign: similar to wp_heap_wr for the Assign statement *)
 
-  Lemma wp_assign stk_id stk_frm v v' e:
+  Lemma wp_assign stk_id stk_frm v v' e msk:
     {{{ stack_own[ stk_id, stk_frm] ∗ ⌜expr_step e stk_frm (Val v')⌝}}}
-      (RTAssign v e stk_id)
+      (RTAssign v e stk_id) @ msk
     {{{ RET LitUnit; stack_own[ stk_id, StackFrame (<[v:=v']>stk_frm.(locals)) ] }}}.
   Proof.
     iIntros (Φ) "[Hstk %He] HΦ".

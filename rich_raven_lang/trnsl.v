@@ -5,6 +5,8 @@ From stdpp Require Import gmap list sets.
 
 From iris Require Import options.
 From iris.algebra Require Import cmra.
+From iris.bi Require Import derived_laws.
+From iris.base_logic Require Import upred.
 From iris.base_logic.lib Require Export own.
 From iris.base_logic.lib Require Import ghost_map.
 From iris.base_logic.lib Require Import invariants.
@@ -46,66 +48,10 @@ Section MainTranslation.
     Definition inv_set_to_namespace (s : gset inv_name) : coPset :=
       set_fold (λ inv acc, acc ∪ ↑(inv_namespace_map inv)) ∅ s.
 
-      (* Check Σ. *)
-  
-  
-    (* Definition stack_to_stack_frame (stk : stack) : stack_frame := 
-    . *)
-  
-    Definition sym_stk_eq_stk_frm (stk : stack) (stk_frm : stack_frame) (mp : symb_map): Prop :=
-      (forall (x : var) (lv : lvar), (stk !! x = Some lv) -> (∃ (v : lang.val),  (stk_frm.(locals) !! x = Some v) /\ (LExpr_holds (LBinOp EqOp (LVar lv) (LVal (trnsl_val v))) mp))) /\
-      
-      (forall (x : var) (v : lang.val), (stk_frm.(locals) !! x = Some v) -> (∃ (lv : lvar), (stk !! x = Some lv) /\ (LExpr_holds (LBinOp EqOp (LVar lv) (LVal (trnsl_val v))) mp))).
-
-    Lemma sym_stk_eq_stk_frm_func (stk : stack) (stk_frm1 : stack_frame) (stk_frm2 : stack_frame) (mp : symb_map) :
-      sym_stk_eq_stk_frm stk stk_frm1 mp ->
-      sym_stk_eq_stk_frm stk stk_frm2  mp->
-      stk_frm1 = stk_frm2.
-    Proof.
-      intros H1 H2.
-      destruct stk_frm1 as [locals1 ].
-      destruct stk_frm2 as [locals2 ].
-      f_equal.
-      apply map_eq .
-
-      destruct H1 as [H1f H1b].
-
-      intros i.
-
-      destruct (locals1 !! i) eqn: Hstkfrm1i.
-      - specialize (H1b i v Hstkfrm1i).
-        destruct H1b as [le [Hstki HLexprH]].
-
-        destruct H2 as [H2f H2b].
-        specialize (H2f i le Hstki).
-        destruct H2f as [v' [Hstkfrm2i HLexprH2]].
-        apply EqOp_refl in HLexprH.
-        pose proof (EqOp_trans _ _ _ _ HLexprH HLexprH2) as HE.
-        pose proof (EqpOp_LVal _ _ _ HE) as HE2.
-        apply trnsl_val_inj in HE2.
-        subst v'.
-        simpl in Hstkfrm2i. done.
-      
-      - destruct (stk !! i) eqn: Hstk1i.
-        + specialize (H1f _ _ Hstk1i).
-          destruct H1f as [v [Hstkfrm1]].
-          simpl in Hstkfrm1.
-          rewrite Hstkfrm1 in Hstkfrm1i.
-          inversion Hstkfrm1i.
-
-        + destruct (locals2 !! i) eqn: Hstkfrm2i.
-          * destruct H2 as [H2f H2b].
-            specialize (H2b _ _ Hstkfrm2i).
-            destruct H2b as [le' [Hstk2i _]].
-            rewrite Hstk1i in Hstk2i.
-            inversion Hstk2i.
-          * done.
-    Qed.
-
     Definition symb_stk_to_stk_frm (stk : stack) (mp : symb_map) : stack_frame :=
       StackFrame (fmap (λ v, trnsl_lval (mp v)) stk).
 
-    Lemma trnsl_expr_interp_lexpr_compatibility stk e lv mp : trnsl_expr_lExpr stk e = Some (LVal lv) -> expr_step e (symb_stk_to_stk_frm stk mp) (Val (trnsl_lval lv)).
+    Lemma trnsl_expr_interp_lexpr_compatibility stk e lexpr lv mp : trnsl_expr_lExpr stk e = Some (lexpr) -> interp_lexpr lexpr mp = Some lv -> expr_step e (symb_stk_to_stk_frm stk mp) (Val (trnsl_lval lv)).
     Admitted.
 
     Definition trnsl_hoare_triple (stk : stack) (stk_id: stack_id) (p : assertion) (msk1 : maskAnnot) (cmd : stmt) (stk' : stack) (q : assertion) (msk2 : maskAnnot) (mp : symb_map) : iProp rrl_lang.Σ :=
@@ -116,7 +62,7 @@ Section MainTranslation.
                 (trnsl_assertion q mp) with
           | None, _ | _, None => True
           | Some p', Some q' =>
-            p' ∗ stack_own[ stk_id, symb_stk_to_stk_frm stk mp ] -∗ (q' ∗ stack_own[ stk_id, symb_stk_to_stk_frm stk' mp])
+            p' ∗ stack_own[ stk_id, symb_stk_to_stk_frm stk mp ] ={inv_set_to_namespace msk1}=∗ (q' ∗ stack_own[ stk_id, symb_stk_to_stk_frm stk' mp])
           end
         
         | Some' s =>
@@ -125,23 +71,26 @@ Section MainTranslation.
           | None, _ | _, None => True
           | Some p', Some q' => 
             {{{ p' ∗ stack_own[ stk_id, symb_stk_to_stk_frm stk mp ] }}}  
-              to_rtstmt stk_id s 
+              to_rtstmt stk_id s @ (inv_set_to_namespace msk1)
             {{{ RET lang.LitUnit; q' ∗ stack_own[ stk_id, symb_stk_to_stk_frm stk' mp] }}}
           end
         end
     .
   
     Theorem rrl_validity stk stk_id p msk1 cmd stk' q msk2 :
-      forall mp, RavenHoareTriple stk p msk1 cmd stk' q msk2 ->
+      forall mp, ⌜RavenHoareTriple stk p msk1 cmd stk' q msk2⌝
       ⊢ (trnsl_hoare_triple stk stk_id p msk1 cmd stk' q msk2 mp).
     Proof.
-      intros mp H.
-      destruct H as 
+      iIntros (mp) "%H". 
+      iInduction H as 
       [ | 
       | stk mask v fld e old_val new_val lv Hatm HLexpr1 
-      | | | | | | | | | | | | | ].
+      | | | | 
+      | stk mask invr args stmt inv_record p q lexprs Hargs Hinv_mask Hinv_record subst Hbody IHHbody
+      | | | | | | | | ] "IH".
       3: {
         unfold trnsl_hoare_triple.
+        simpl.
         destruct (trnsl_stmt (FldWr v fld e)) eqn:Ht. 2: done.
         { inversion Ht. } 
 
@@ -152,19 +101,25 @@ Section MainTranslation.
 
         iDestruct "Hstk1" as "[%l [%Hlexpr1 Hlfld]]".
         
-        iApply (wp_heap_wr stk_id (symb_stk_to_stk_frm stk mp) _ _ _ l _ _ with "[Hstk2 Hlfld]").
+        iApply (wp_heap_wr stk_id (symb_stk_to_stk_frm stk mp) _ _ _ l _ _ _ with "[Hstk2 Hlfld]").
         
         {
           iFrame.
           iSplit.
           { iPureIntro. simpl. rewrite lookup_fmap. 
             (* rewrite HLexpr. simpl. apply f_equal.  *)
-            rewrite Hatm. simpl. rewrite Hlexpr1. simpl. apply f_equal. 
+            rewrite Hatm. simpl. unfold LExpr_holds in Hlexpr1. simpl in Hlexpr1. injection Hlexpr1 as Hlv. 
+            destruct (val_beq (mp lv) (LitLoc l)) eqn:Hlv'.
+            - apply f_equal.
+            apply internal_val_dec_bl in Hlv'.
+            rewrite Hlv'. simpl. apply f_equal. 
 
-            destruct l. simpl. done. 
-          }
+            destruct l. simpl. done.
+            - inversion Hlv. 
+          } 
 
-          { iPureIntro. apply trnsl_expr_interp_lexpr_compatibility. done. }
+
+          { iPureIntro. apply (trnsl_expr_interp_lexpr_compatibility _ _ (LVal new_val)). { done. } done. }
         }
 
         {
@@ -172,9 +127,114 @@ Section MainTranslation.
           iApply "HΦ". iFrame.
           iPureIntro. done.
         }
+
+      }
+
+      7: {
+        unfold trnsl_hoare_triple.
+
+        pose proof (trnsl_inv_validity invr lexprs mp) as Htrnsl_inv_valid.
+        rewrite Hinv_record in Htrnsl_inv_valid. simpl in Htrnsl_inv_valid.
+        destruct (trnsl_assertion (rrl_lang.subst (inv_body inv_record)
+        subst) mp) eqn:HinvBody. 2:{ rewrite HinvBody in Htrnsl_inv_valid. inversion Htrnsl_inv_valid. }
+
+        rewrite HinvBody in Htrnsl_inv_valid. injection Htrnsl_inv_valid as Htrnsl_inv.
+        
+        destruct (trnsl_stmt (InvAccessBlock invr args stmt)) eqn:Ht. 2: done.
+
+        
+        { 
+          simpl. rewrite Hinv_record. 
+           destruct (trnsl_assertion p mp) eqn:Hp, (trnsl_assertion q mp) eqn:Hq; try done.
+           iIntros "[[#H Hu] Hstk]".
+           (* unfold trnsl_hoare_triple in IH. *)
+           assert (trnsl_stmt stmt = None'). { admit. }
+           iEval (rewrite H HinvBody) in "IH".
+           (* rewrite Hp Hq in IHHbody. *)
+
+          iInv "H" as "Hinv".
+          { 
+            (* inv_namespace mask *)
+            admit.
+          }
+          rewrite <- Htrnsl_inv.
+
+          assert (Timeless u). { admit. }
+          iDestruct "Hinv" as ">Hinv".
+          iCombine "Hinv Hu" as "Hcomb1".
+          iCombine "Hcomb1 Hstk" as "Hcomb2".
+          (* Unset Printing Notations. *)
+          (* iPoseProof IHHbody as "Htriple". *)
+          
+          iPoseProof ("IH" with "Hcomb2") as "IH2".
+          iFrame.
+          assert ((inv_set_to_namespace (mask ∖ {[invr]})) = inv_set_to_namespace mask ∖ ↑inv_namespace_map invr). { admit. }
+          rewrite H1.
+          iDestruct "IH2" as ">IH2".
+          iDestruct "IH2" as "[[IHH1 IHH] IHs]".
+          iModIntro.
+          iFrame "# ∗". done.
+
+          (* pose proof (trnsl_inv_validity invr lexprs mp) as Htrnsl_inv_valid. *)
+        }
+        
+        { 
+          assert (trnsl_stmt stmt = Some' s). { admit. }
+          simpl.
+          iEval (rewrite H HinvBody) in "IH" .
+          iEval (rewrite Hinv_record).
+          destruct (trnsl_assertion p mp) eqn:Hp, (trnsl_assertion q mp) eqn:Hq; try done.
+          iIntros (Φ).
+          iModIntro.
+          iIntros "[[#HInv Hu] Hstk] HΦ".
+          rewrite <- Htrnsl_inv.
+          
+          assert (Timeless u). { admit. }
+          iInv "HInv" as ">HInvBody".
+          { 
+            (* namespace *) admit.
+          }
+
+          {
+            (* atomicity *) admit. 
+          }
+
+          iCombine "HInvBody" "Hu" as "Hcomb1".
+          iCombine "Hcomb1" "Hstk" as "Hcomb2".
+          
+          assert (inv_set_to_namespace (mask ∖ {[invr]}) = inv_set_to_namespace mask ∖ ↑inv_namespace_map invr). { admit. }
+          rewrite H1; destruct H1.
+
+          iApply ("IH" with "Hcomb2").
+          iNext.
+          iIntros "[[Hu Hu1] Hstk]".
+          iModIntro.
+          iFrame.
+          iApply "HΦ".
+          iFrame "# ∗".
+        }
+      }
+
+      (* 1 : {
+        unfold trnsl_hoare_triple. simpl.
+
+        iIntros (Φ).
+        iModIntro.
+        iIntros "[_ Hstk] HΦ".
+
+        iApply (wp_assign stk_id (symb_stk_to_stk_frm stk mp) v (trnsl_lval (mp v2)) e with "[Hstk]").
+
+        {
+          iFrame.
+          iPureIntro.
+          apply (trnsl_expr_interp_lexpr_compatibility _ _ lexpr). { done. } 
+
+        }
+        
+
+
+      } *)
   
     Admitted.
-    
-  
   
   End MainTranslation.

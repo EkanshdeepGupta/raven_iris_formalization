@@ -1,8 +1,8 @@
 From stdpp Require Export binders strings.
 From stdpp Require Import countable.
 Require Import Eqdep_dec.
-From stdpp Require Import gmap list sets.
-From stdpp Require Export namespaces.
+From stdpp Require Import gmap list sets coPset.
+From stdpp Require Import namespaces.
 
 From iris Require Import options.
 From iris.algebra Require Import cmra.
@@ -59,8 +59,8 @@ Parameter ResourceAlgebras : list RA_Pack.
 Inductive typ :=
 | TpInt | TpLoc | TpBool.
 
-Definition fld_name := string.
-Parameter fld_set : gset fld_name.
+(* Definition fld_name := string. *)
+Parameter fld_set : gset lang.fld_name.
 
 Record fld := Fld { fld_name_val : fld_name; fld_typ : typ }.
 
@@ -151,7 +151,7 @@ Fixpoint interp_lexpr (le : LExpr) (mp : symb_map) : option val :=
 
     | EqOp =>
       match interp_lexpr e1 mp, interp_lexpr e2 mp with
-      | Some v1, Some v2 => Some (LitBool (if val_beq v1  v2 then true else false))
+      | Some v1, Some v2 => Some (LitBool (if val_beq v1 v2 then true else false))
       | _, _ => None
       end
 
@@ -210,55 +210,10 @@ Fixpoint interp_lexpr (le : LExpr) (mp : symb_map) : option val :=
 
 
 (* TODO: Fix this with a proper error state; at present returning True when le is malformed which is not sound. *)
-Fixpoint LExpr_holds (le : LExpr) (mp : symb_map) : Prop :=
-  match le with
-  | LBinOp op e1 e2 =>
-    match op with
-    | EqOp =>
-      match interp_lexpr e1 mp, interp_lexpr e2 mp with
-      | Some v1, Some v2 => (v1 = v2)
-      | _, _ => True
-      end
-
-    | NeOp =>
-      match interp_lexpr e1 mp, interp_lexpr e2 mp with
-      | Some v1, Some v2 => not (v1 = v2)
-      | _, _ => True
-      end
-
-    | LtOp =>
-      match interp_lexpr e1 mp, interp_lexpr e2 mp with
-      | Some (LitInt i1), Some (LitInt i2) => (Z.lt i1 i2)
-      | _, _ => True
-      end
-
-    | GtOp =>
-      match interp_lexpr e1 mp, interp_lexpr e2 mp with
-      | Some (LitInt i1), Some (LitInt i2) => (Z.gt i1 i2)
-      | _, _ => True
-      end
-    
-    | LeOp =>
-      match interp_lexpr e1 mp, interp_lexpr e2 mp with
-      | Some (LitInt i1), Some (LitInt i2) => (Z.le i1 i2)
-      | _, _ => True
-      end
-      
-    | GeOp =>
-      match interp_lexpr e1 mp, interp_lexpr e2 mp with
-      | Some (LitInt i1), Some (LitInt i2) => (Z.ge i1 i2)
-      | _, _ => True
-      end
-
-    | AndOp =>
-      LExpr_holds e1 mp /\ LExpr_holds e2 mp
-
-    | OrOp =>
-      LExpr_holds e1 mp \/ LExpr_holds e2 mp
-    
-    | _ => True
-    end
-  | _ => True
+Definition LExpr_holds (le : LExpr) (mp : symb_map) : Prop :=
+  match interp_lexpr le mp with
+  | Some v => v = LitBool true
+  | None => True
   end.
 
 Definition trnsl_val (v: lang.val) : val :=
@@ -339,7 +294,7 @@ Inductive stmt :=
 | FldWr (v : lang.var) (fld : fld_name) (e2 : lang.expr)
 | FldRd (v : lang.var) (e : lang.expr) (fld : fld_name)
 | CAS (v : lang.var) (e1 : lang.expr) (fld : fld_name) (e2 : lang.expr) (e3 : lang.expr)
-| Alloc (e : lang.expr) (fs: list (fld_name * val))
+| Alloc (v : lang.var) (fs: list (lang.fld_name * lang.val))
 | Spawn (proc : proc_name) (args : list lang.expr)
 | UnfoldPred (pred : pred_name) (args : list lang.expr)
 | FoldPred (pred : pred_name) (args : list lang.expr)
@@ -453,10 +408,9 @@ Inductive stmt_well_defined : stmt -> Prop :=
     expr_well_defined e2 ->
     expr_well_defined e3 ->
     stmt_well_defined (CAS v e1 fld e2 e3)
-| AllocTp e fs: 
-    expr_well_defined e ->
+| AllocTp v fs: 
     Forall (fun fld_v => (fst fld_v) ∈ fld_set) fs ->
-    stmt_well_defined (Alloc e fs)
+    stmt_well_defined (Alloc v fs)
 | SpawnTp proc args: 
     proc ∈ proc_set ->
     Forall (fun arg => expr_well_defined arg) args ->
@@ -567,13 +521,13 @@ Section Translation.
       Some (⌜LExpr_holds cnd mp⌝ -∗ body_expr)%I
       end
       (* True *)
-    | LInv inv args => 
-      match inv_map !! inv with
+    | LInv inv' args => 
+      match inv_map !! inv' with
       | Some inv_record => 
         let subst_map := list_to_map (zip inv_record.(inv_args) args) in
         let subst_body := subst inv_record.(inv_body) subst_map in
 
-        Some (invariants.inv (inv_namespace_map inv) (trnsl_inv inv args mp))
+        Some (inv (inv_namespace_map inv') (trnsl_inv inv' args mp))
 
         (* False *)
       | None => None
@@ -604,7 +558,7 @@ Section Translation.
     | Some inv_rec => 
       let subst_map := list_to_map (zip inv_rec.(inv_args) args) in
 
-      trnsl_assertion (subst inv_rec.(inv_body) subst_map) mp= Some (trnsl_inv inv args mp)
+      trnsl_assertion (subst inv_rec.(inv_body) subst_map) mp = Some (trnsl_inv inv args mp)
     | None => true
     end
   .
@@ -644,6 +598,57 @@ Section Translation.
   | None'
   | Error
   | Some' (s: lang.stmt).
+  
+  Fixpoint trnsl_atomic_block (body : stmt) (step_taken : bool) : trnsl_stmt_ret * bool := 
+  match body, step_taken with
+  | Seq s1 s2, _ =>
+    match trnsl_atomic_block s1 step_taken with
+    | (None', step_taken') => trnsl_atomic_block s2 step_taken'
+    | (Some' s1, step_taken') => 
+      match trnsl_atomic_block s2 step_taken' with
+      | (None', step_taken'') => (Some' s1, step_taken'')
+      | (Some' s2, step_taken'') => (Some' (lang.Seq s1 s2), step_taken'')
+      | (Error, _) => (Error, step_taken')
+      end
+    | (Error, _) => (Error, step_taken)
+    end
+
+  | IfS e s1 s2, _ =>
+    match trnsl_atomic_block s1 step_taken, trnsl_atomic_block s2 step_taken with
+    | (None', step_taken'), (None', step_taken'') => (Some' (lang.SkipS), step_taken' || step_taken'')
+    | (None', step_taken'), (Some' s2, step_taken'') => (Some' (lang.IfS e lang.SkipS s2), step_taken' || step_taken'')
+    | (Some' s1, step_taken'), (None', step_taken'') => (Some' (lang.IfS e s1 lang.SkipS), step_taken' || step_taken'')
+    | (Some' s1, step_taken'), (Some' s2, step_taken'') => (Some' (lang.IfS e s1 s2), step_taken' || step_taken'')
+    | (Error, _), _ | _, (Error, _) => (Error, step_taken)
+    end
+
+  | Assign v e, false => (Some' (lang.Assign v e), true)
+  | Assign v e, true => (Error, true)
+
+  | SkipS, false => (Some' lang.SkipS, false)
+  | SkipS, true => (Some' lang.SkipS, true)
+
+  | StuckS, _ => (Some' lang.StuckS, step_taken)
+  | Call v proc args, _ => (Error, true)
+
+  | FldWr v fld e2, false => (Some' (lang.FldWr v fld e2), true)
+  | FldWr v fld e2, true => (Error, true)
+
+  | FldRd v e fld, false => (Some' (lang.FldRd v e fld), true)
+  | FldRd v e fld, true => (Error, true)
+
+  | CAS v e1 fld e2 e3, false => (Some' (lang.CAS v e1 fld e2 e3), true)
+  | CAS v e1 fld e2 e3, true => (Error, true)
+
+  | Alloc v fs, false => (Some' (lang.Alloc v fs), true)
+  | Alloc v fs, true => (Error, true)
+
+  | Spawn proc args, false => (Some' (lang.Spawn proc args), true)
+  | Spawn proc args, true => (Error, true)
+  | InvAccessBlock inv args body, _ => trnsl_atomic_block body step_taken
+  | _, _ => (None', step_taken)
+  end.
+
 
   Fixpoint trnsl_stmt (s : stmt) : trnsl_stmt_ret := match s with
   | Seq s1 s2 => 
@@ -672,14 +677,15 @@ Section Translation.
   (* Some (lang.Call v proc args) *)
   | FldWr v fld e2 => Some' (lang.FldWr v fld e2)
   
-  | FldRd v e1 fld => None'
-  | CAS v e1 fld e2 e3 => None'
-  | Alloc e fs => None'
+  | FldRd v e1 fld => Some' (lang.FldRd v e1 fld)
+  | CAS v e1 fld e2 e3 => Some' (lang.CAS v e1 fld e2 e3)
+  | Alloc v fs => Some' (lang.Alloc v fs)
   | Spawn proc args => None'
   
   | UnfoldPred pred args => None'
   | FoldPred pred args => None'
-  | InvAccessBlock inv args body => trnsl_stmt body
+  | InvAccessBlock inv args body => (trnsl_atomic_block body false).1
+
   (* | UnfoldInv inv args => None'
   | FoldInv inv args => None' *)
   | Fpu e fld RAPack old_val new_val => None'
@@ -694,7 +700,7 @@ Section RavenLogic.
 
   Fixpoint field_list_to_assertion lexpr fld_vals  := match fld_vals with
   | [] => LPure true
-  | (fld,val) :: fld_vals => LAnd (LOwn lexpr fld val) (field_list_to_assertion lexpr fld_vals)
+  | (fld,val) :: fld_vals => LAnd (LOwn lexpr fld (trnsl_val val)) (field_list_to_assertion lexpr fld_vals)
   end.
 
   Inductive RavenHoareTriple : 
@@ -731,7 +737,7 @@ Section RavenLogic.
     fresh_lvar stk lvar_x ->
     RavenHoareTriple
       stk (LPure true) mask
-        (Alloc (Var x) fld_vals)
+        (Alloc x fld_vals)
       (<[x := lvar_x]> stk) (field_list_to_assertion (LVar lvar_x) fld_vals) mask
 
   | ProcCallRuleRet stk mask x proc_name args lexprs lvar_x proc_record :
@@ -917,9 +923,10 @@ Section LExpr_embed.
   Proof.
     intros.
     unfold LExpr_holds.
-    destruct (interp_lexpr a mp) eqn: H0, (interp_lexpr b mp) eqn:H1 ; try done.
-    unfold LExpr_holds in H. rewrite H0 in H. rewrite H1 in H. rewrite H. reflexivity.
-  Qed.
+    destruct (interp_lexpr (LBinOp EqOp b a) mp) eqn: H0; try done.
+  Admitted.
+   (* rewrite H0 in H. rewrite H1 in H. rewrite H. reflexivity. *)
+  (* Qed. *)
 
 
 
