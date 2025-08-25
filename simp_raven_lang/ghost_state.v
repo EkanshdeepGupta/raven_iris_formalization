@@ -1,4 +1,4 @@
-From stdpp Require Import coPset.
+From stdpp Require Import coPset gmap.
 From Coq Require Import QArith Qcanon.
 From iris.algebra Require Import big_op gmap frac agree.
 From iris.algebra Require Import csum excl auth cmra_big_op numbers.
@@ -13,15 +13,6 @@ From iris.proofmode Require Import proofmode.
 
 Set Default Proof Using "Type".
 Import uPred.
-
-(* Inductive heap_addr :=
-| heap_addr_constr:  loc -> fld_name -> heap_addr.
-
-Global Instance heap_addr_eq : EqDecision heap_addr.
-Proof. solve_decision. Qed.
-
-Global Declare Instance heap_addr_countable : Countable heap_addr. *)
-
 
 Inductive stackvar_addr :=
 | mk_stkvar_addr (stk_id : stack_id) (v : var).
@@ -56,24 +47,17 @@ Section definitions.
   Definition to_heap_cellR (v: val) : heap_cellR := (1%Qp, to_agree v).
 
   (* Not sure why this is needed. *)
-  Global Instance insert : Insert heap_addr (Qp * val) (gmap heap_addr heap_cellR).
-  Proof. unfold Insert; intros; done. Qed.
+  (* Global Instance insert : Insert heap_addr (Qp * val) (gmap heap_addr heap_cellR).
+  Proof. unfold Insert; intros; done. Qed. *)
   
   Global Instance heap_add_fmap : FMap (gmap heap_addr).
   Proof. apply gmap_fmap. Qed.
 
+  Global Declare Instance heap_addr_finmap : FinMap heap_addr (gmap heap_addr).
 
 
   Definition to_heapUR (h : heap) : heapUR :=
   fmap (λ v, (to_heap_cellR v)) h.
-  (* fold_left (fun acc (p : loc * gmap fld_name val) =>
-    let (l, fs) := p in
-    fold_left (fun (acc' : (gmap heap_addr heap_cellR)) (q : fld_name * val) =>
-      let (f, v) := q in
-      <[ (heap_addr_constr l f) := (to_heap_cellR v)]> acc' )
-
-    (map_to_list fs) acc)
-  (map_to_list h) ∅. *)
 
   Definition heap_interp (h : heap) : iProp Σ :=
   own heap_heap_name (● (to_heapUR h)).
@@ -83,13 +67,6 @@ Section definitions.
 
   Definition to_stackR (s : gmap stack_id stack_frame) : stackUR :=
     fmap (λ frm, Excl frm) s.
-    (* fold_left (fun acc (elem : stack_id * stack_frame) =>
-      let (sid, sf) := elem in
-      fold_left (fun acc' (elem2 : var * val) => 
-        let (x, v) := elem2 in
-        (<[ (mk_stkvar_addr sid x) := (Excl v)]> acc')
-      ) (map_to_list sf.(locals)) acc
-    ) (map_to_list s) (∅ : (gmapR stackvar_addr (exclR valO))). *)
 
   Definition stack_interp (stack : gmap stack_id stack_frame) : iProp Σ :=
     own heap_stack_name (● (to_stackR stack)).
@@ -97,7 +74,6 @@ Section definitions.
   Definition state_interp (σ : state) : iProp Σ :=
   heap_interp σ.(global_heap) ∗ proc_tbl_interp σ.(procs) ∗ stack_interp σ.(stack).
 
-  Global Instance singletonM_heapUR : SingletonM heap_addr (Qp * val) heapUR := λ H H0, <[H := H0]> ∅.
 
   Definition heap_maps_to (l : loc) (fld : fld_name) (q : Qp) (v : val) :=
     own heap_heap_name (◯ {[(heap_addr_constr l fld) := (q, to_agree v)]}).
@@ -141,6 +117,48 @@ Section definitions.
     destruct Hi1; try done.
     destruct H as [a [b [H1 [H2 H3]]]]. try done.
   Qed.
+
+  Lemma heap_interp_agreement σ l f q v:
+  (heap_interp (global_heap σ)) -∗ (heap_maps_to l f q v) -∗ ⌜lookup_heap σ l f = Some v⌝.
+  Proof.
+    iIntros "Hheap Hhp".
+    unfold heap_interp.
+    unfold heap_maps_to.
+    iCombine "Hheap" "Hhp" as "HhpV".
+    iPoseProof (own_valid with "HhpV") as "%Hi".
+    apply auth_both_valid_discrete in Hi.
+    destruct Hi as [Hi1 Hi2].
+
+    (* Search gmap.lookup_included. *)
+    rewrite (gmap.lookup_included ({[heap_addr_constr l f := (q, to_agree v)]})) in Hi1.
+    specialize (Hi1 (heap_addr_constr l f)).
+    iPureIntro.
+    unfold to_heapUR in Hi1.
+
+    rewrite lookup_insert in Hi1.
+    rewrite lookup_fmap in Hi1.
+    unfold lookup_heap.
+
+    apply Some_included_is_Some in Hi1 as H3.
+    (* Had to destruct a verbose version to mitigate strange Coq errors. *)
+    destruct ((@lookup heap_addr val
+      (@gmap heap_addr heap_addr_eq heap_addr_countable val)
+      (@gmap_lookup heap_addr heap_addr_eq heap_addr_countable val)
+      (heap_addr_constr l f) (global_heap σ))) eqn:Hlp; try done.
+
+    2 : { simpl in *. destruct H3 as [x Hx]. simpl in Hx. discriminate. }
+    
+    rewrite Hlp.  
+    simpl in *.
+    apply Some_pair_included in Hi1 as [_ Heq].
+
+    rewrite Some_included_total in Heq.
+    rewrite to_agree_included in Heq.
+    apply f_equal.
+    simpl in *.
+    setoid_subst. done.
+  Qed.
+
 End definitions.
 
 Notation " l # f  ↦{ q } v" := (heap_maps_to l f q v)

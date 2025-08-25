@@ -381,8 +381,8 @@ Inductive runtime_step : runtime_stmt → state → list Empty_set → runtime_s
 
 | AllocStep σ stk_id v fs :
   let l := fresh_loc σ.(global_heap) in
-  let σ' := (fold_left (fun acc (f_v : fld_name * val) => update_heap acc l (fst f_v) (snd f_v)) fs σ) in
-  let σ'' := update_lvar σ v stk_id (LitLoc l) in
+  let σ' := (foldr (fun f_v acc => update_heap acc l (fst f_v) (snd f_v)) σ fs) in
+  let σ'' := update_lvar σ' v stk_id (LitLoc l) in
   runtime_step (RTAlloc v fs stk_id) σ [] (RTVal LitUnit) σ'' []
 
 | SpawnStep σ stk_id stk_frm proc args arg_vals procedure :
@@ -404,6 +404,9 @@ Inductive runtime_step : runtime_stmt → state → list Empty_set → runtime_s
   let σ' := update_lvar σ var caller_stk_id ret_val in
   runtime_step (RTActiveCall var (RTVal value) callee_stk_id caller_stk_id) σ []
   (RTVal LitUnit) σ' []
+
+| SeqStep σ v s2:
+  runtime_step (RTSeq (RTVal v) s2) σ [] s2 σ []
 
   .
 
