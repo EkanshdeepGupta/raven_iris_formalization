@@ -370,10 +370,9 @@ Inductive runtime_step : runtime_stmt → state → list Empty_set → runtime_s
   let σ'' := update_lvar σ' v stk_id (LitBool true) in
   runtime_step (RTCAS v e1 fld e2 e3 stk_id) σ [] (RTVal LitUnit) σ'' []
 
-| CASFailStep σ stk_id stk_frm v e1 fld e2 e3 l v0 v2 v3 :
+| CASFailStep σ stk_id stk_frm v e1 fld e2 e3 l v0 v2 :
   σ.(stack) !! stk_id = Some stk_frm ->expr_step e1 stk_frm (Val (LitLoc l)) ->
   expr_step e2 stk_frm (Val v2) ->
-  expr_step e3 stk_frm (Val v3) ->
   lookup_heap σ l fld = Some v0 ->
   not (v0 = v2) ->
   let σ' := update_lvar σ v stk_id (LitBool false) in

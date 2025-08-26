@@ -479,6 +479,10 @@ Section Translation.
     (* | LitRAElem _ _ => None *)
     end.
 
+    Lemma trnsl_lval_injective v1 v2 : trnsl_lval v1 = trnsl_lval v2 -> v1 = v2.
+    Proof.
+      Admitted.
+
     Global Parameter trnsl_pred : pred_name -> list LExpr -> symb_map -> iProp Σ.
     Global Parameter trnsl_inv : inv_name -> list LExpr -> symb_map -> iProp Σ.
 

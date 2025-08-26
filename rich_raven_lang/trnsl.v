@@ -106,6 +106,14 @@ Section MainTranslation.
     Proof.
       Admitted.
 
+    Lemma val_beq_eq (v1 : val) (v2 : val) : val_beq v1 v2 = true -> v1 = v2.
+    Proof.
+      Admitted.
+
+    Lemma val_beq_neq v1 v2 : val_beq v1 v2 = false -> v1 ≠ v2.
+    Proof.
+      Admitted.
+
 
     Lemma expr_interp_well_defined stk e mp lexpr: 
       trnsl_expr_lExpr stk e = Some lexpr -> 
@@ -560,12 +568,132 @@ Section MainTranslation.
         (* SKIP *)
         unfold trnsl_hoare_triple. simpl.
         destruct (trnsl_assertion p stk_id mp); try done.
+        (* Unset Printing Notations. *)
         (* iApply (wp_skip (stack_own[ stk_id, symb_stk_to_stk_frm stk mp] ∗ u ) (inv_set_to_namespace mask) (stk_id)). *)
         iIntros (Φ). iModIntro. iIntros "Hp HΦ".
         iApply (wp_skip with "Hp"). iFrame. 
       }
 
-      
+      5: {
+        (* CAS SUCC *)
+        unfold trnsl_hoare_triple; simpl.
+        iIntros (Φ). iModIntro. iIntros "[Hstk He1] HΦ".
+        iDestruct "He1" as (l) "[%He1 Hl]".
+        assert (interp_lexpr (LVal old_val) mp = Some old_val) as Hinterp_old; try done.
+        assert (interp_lexpr (LVal new_val) mp = Some new_val) as Hinterp_new; try done.
+        pose proof (trnsl_expr_interp_lexpr_compatibility _ _ _ _ _ H1 Hinterp_old) as Hexpr_step_e2.
+        pose proof (trnsl_expr_interp_lexpr_compatibility _ _ _ _ _ H2 Hinterp_new) as Hexpr_step_e3.
+        unfold LExpr_holds in He1. simpl in He1.
+        destruct (interp_lexpr lexpr1 mp) eqn:Hlexpr1.
+        2 : { 
+            (* Make sure interp_lexpr lexpr1 is not None *)
+            admit. 
+        }
+        
+        injection He1 as He1.
+        destruct (val_beq v0 (LitLoc l)) eqn:Hv0_l; try done.
+        apply val_beq_eq in Hv0_l. rewrite Hv0_l in Hlexpr1.
+        
+        pose proof (trnsl_expr_interp_lexpr_compatibility _ _ _ _ _ H0 Hlexpr1) as Hexpr_step_e1.
+
+
+        iApply (wp_cas_succ v e1 fld e2 e3 stk_id (symb_stk_to_stk_frm stk mp) l (trnsl_lval old_val) (trnsl_lval new_val) with "[Hstk Hl]"); try done.
+        
+        { assert (trnsl_lval (LitLoc l) = (lang.LitLoc l)).
+        - simpl. destruct l. simpl. done.
+        - rewrite -> H3 in *. done. }
+
+        { iFrame. }
+
+        iNext. iIntros "[Hstk Hl]".
+        iApply "HΦ".
+        iExists (LitBool true).
+        iSplitL "Hstk".
+        - rewrite fresh_mp_rewrite_symb_stk_to_stk_frm_compat; try done.
+
+        - iSplitL.
+        { iExists l.  iSplitR.
+        - iPureIntro. apply EqOp_refl. 
+          unfold LExpr_holds. simpl. 
+          rewrite <- (fresh_var_trnsl_expr_invariant stk lvar_v e1 lexpr1 mp (LitBool true)); try done. rewrite Hlexpr1. 
+          assert (internal_loc_beq l l = true) as H_l_l. { admit. } 
+          rewrite H_l_l. done.
+          
+        - iFrame.
+          
+         }
+
+         iPureIntro.
+         unfold LExpr_holds. simpl. rewrite String.eqb_refl. rewrite val_beq_refl. done.
+
+      }
+
+      5 : {
+        (* CASS FAIL *)
+        unfold trnsl_hoare_triple; simpl.
+        iIntros (Φ). iModIntro. iIntros "[Hstk [He1 %Hneq]] HΦ".
+        iDestruct "He1" as (l) "[%He1 Hl]".
+        assert (interp_lexpr (LVal old_val2) mp = Some old_val2) as Hinterp_old; try done.
+        (* assert (interp_lexpr (LVal old_val) mp = Some new_val) as Hinterp_new; try done. *)
+        pose proof (trnsl_expr_interp_lexpr_compatibility _ _ _ _ _ H1 Hinterp_old) as Hexpr_step_e2.
+        (* pose proof (trnsl_expr_interp_lexpr_compatibility _ _ _ _ _ H2 Hinterp_new) as Hexpr_step_e3. *)
+        unfold LExpr_holds in He1. simpl in He1.
+        destruct (interp_lexpr lexpr1 mp) eqn:Hlexpr1.
+        2 : { 
+            (* Make sure interp_lexpr lexpr1 is not None *)
+            admit. 
+        }
+        
+        injection He1 as He1.
+        destruct (val_beq v0 (LitLoc l)) eqn:Hv0_l; try done.
+        apply val_beq_eq in Hv0_l. rewrite Hv0_l in Hlexpr1.
+        
+        pose proof (trnsl_expr_interp_lexpr_compatibility _ _ _ _ _ H0 Hlexpr1) as Hexpr_step_e1.
+
+        iApply (wp_cas_fail v e1 fld e2 e3 stk_id (symb_stk_to_stk_frm stk mp) l (trnsl_lval old_val2) (trnsl_lval old_val) _ with "[Hstk Hl]"); try done.
+        
+        - assert (trnsl_lval (LitLoc l) = (lang.LitLoc l)) as H2. { simpl. destruct l. simpl. done. }
+        { rewrite -> H2 in *. done. }
+
+        - unfold LExpr_holds in Hneq.
+          simpl in Hneq. injection Hneq as Hneq.
+
+          assert (val_beq old_val old_val2 = false) as Hbeq.
+          { simpl in Hneq.
+          move: Hneq. by case (val_beq old_val old_val2). }
+
+          apply val_beq_neq in Hbeq.
+          assert (trnsl_lval old_val ≠ trnsl_lval old_val2) as Hneq2.
+          { intros Heq. apply Hbeq. apply (trnsl_lval_injective _ _ Heq). }
+          done.
+
+        - iFrame.
+
+        - iNext. iIntros "[Hstk Hl]".
+          iApply "HΦ".
+          iExists (LitBool false).
+          iSplitL "Hstk".
+
+          { rewrite fresh_mp_rewrite_symb_stk_to_stk_frm_compat; try done. }
+          
+          iSplitL.
+          { 
+            iExists l. iFrame. iPureIntro. unfold LExpr_holds. simpl. 
+            rewrite <- (fresh_var_trnsl_expr_invariant stk lvar_v e1 lexpr1 mp (LitBool false)); try done. rewrite Hlexpr1. rewrite val_beq_refl.
+            done.
+          }
+
+          { 
+            iPureIntro. unfold LExpr_holds; simpl.
+            apply f_equal. rewrite String.eqb_refl. rewrite val_beq_refl. done.
+
+          }
+
+      }
+
+
+
+
 
       
 
