@@ -114,7 +114,6 @@ Section MainTranslation.
     Proof.
       Admitted.
 
-
     Lemma expr_interp_well_defined stk e mp lexpr: 
       trnsl_expr_lExpr stk e = Some lexpr -> 
       interp_lexpr lexpr mp = None -> 
@@ -688,6 +687,60 @@ Section MainTranslation.
             apply f_equal. rewrite String.eqb_refl. rewrite val_beq_refl. done.
 
           }
+
+      }
+
+      4 : {
+        (* WEAKENING *)
+        unfold entails in *.
+        unfold trnsl_hoare_triple. simpl.
+        specialize H0 with stk_id mp.
+        destruct H0 as [P' [P [HP' [HP HP_ent_P']]]].
+        
+        specialize H1 with stk_id mp.
+        destruct H1 as [Q [Q' [HQ [HQ' HQ_ent_Q']]]].
+        rewrite HP HP' HQ HQ'.
+
+        destruct (trnsl_stmt c) eqn:HtrnslStmt; try done.
+
+        - 
+        iPoseProof ("IH" with "[%]") as "IH2"; try done.
+        iIntros "HP'".
+        iApply HQ_ent_Q'.
+        iApply "IH2".
+        iApply HP_ent_P'.
+        iFrame.
+
+        -
+        iPoseProof ("IH" with "[%]") as "IH2"; try done.
+        iIntros (Φ). iModIntro. iIntros "HP' HΦ".
+        iApply ("IH2" with "[HP']").
+          + iApply HP_ent_P'. iFrame.
+          + iNext. iIntros "HQ". iApply "HΦ". iApply HQ_ent_Q'. iFrame.
+      }
+
+      2 : {
+        (* IF *)
+        inversion Hwelldef; subst e0 s0 s3.
+        iPoseProof ("IH" with "[%]") as "IH'"; try done.
+        iPoseProof ("IH1" with "[%]") as "IH1'"; try done.
+        iClear "IH IH1".
+        unfold trnsl_hoare_triple. simpl.
+
+        destruct (trnsl_stmt s1) eqn:Hs1, (trnsl_stmt s2) eqn:Hs2; try done;
+
+        destruct (trnsl_assertion p stk_id mp) eqn:HP, (trnsl_assertion q stk_id mp) eqn:HQ; try done.
+
+        - iFrame.
+        admit.
+
+        - admit.
+
+        - admit.
+
+        - admit.
+
+        
 
       }
 

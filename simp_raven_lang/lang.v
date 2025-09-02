@@ -85,8 +85,6 @@ Proof. solve_decision. Qed.
 
 Global Declare Instance heap_addr_countable : Countable heap_addr.
 
-
-
 (* Heap maps locations to field-value pairs *)
 Definition heap := gmap heap_addr val.
 
