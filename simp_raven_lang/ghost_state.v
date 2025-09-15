@@ -81,6 +81,9 @@ Section definitions.
   Definition stack_frame_own (stk_id : stack_id) (stk_frm : stack_frame)  := 
     own heap_stack_name (◯ (to_stackR ({[stk_id := stk_frm]} ))).
 
+  Definition proc_tbl_chunk (p : proc_name) (proc : proc) : iProp Σ :=
+    p ↪[heap_proctbl_name] proc.
+
   Lemma heap_update σ l f x v0: 
     (● ((λ v1 : lang.val, to_heap_cellR v1) <$> global_heap σ)
     ⋅ ◯ {[heap_addr_constr l f := (1%Qp, to_agree x)]}) ~~> 
@@ -89,6 +92,8 @@ Section definitions.
     ⋅ ◯ {[heap_addr_constr l f := (1%Qp, to_agree v0)]}).
   Proof.
   Admitted.
+
+
   
   Lemma stack_interp_agreement σ stk_id stk_frm : (stack_interp (stack σ)) -∗ stack_frame_own stk_id stk_frm -∗ ⌜stack σ !! stk_id = Some stk_frm⌝.
   Proof. 
@@ -159,6 +164,12 @@ Section definitions.
     setoid_subst. done.
   Qed.
 
+  Lemma proc_tbl_interp_agreement σ proc proc_entry:
+  (proc_tbl_interp (procs σ)) -∗ (proc_tbl_chunk proc proc_entry) -∗ 
+    ⌜σ.(procs) !! proc = Some proc_entry⌝.
+  Proof.
+  Admitted.
+
 End definitions.
 
 Notation " l # f  ↦{ q } v" := (heap_maps_to l f q v)
@@ -166,3 +177,140 @@ Notation " l # f  ↦{ q } v" := (heap_maps_to l f q v)
 
 Notation "'stack_own[' stk_id , frm ']' " := (stack_frame_own stk_id frm)
 (at level 20) : bi_scope.
+
+Section updates.
+    Context `{!heapG Σ}.
+  Lemma stack_upd_valid σ stk_id stk_frm v val:
+    let σ' := update_lvar σ v stk_id val in
+      ● to_stackR (stack σ) ⋅ ◯ to_stackR {[stk_id := stk_frm]} ~~>
+      ● to_stackR (stack σ') ⋅ ◯ to_stackR {[stk_id := {| locals := <[v:=val]> (locals stk_frm) |}]}.
+  Proof.
+    intros σ'.
+    apply auth_update.
+    apply iris.algebra.gmap.gmap_local_update.
+    intros stk_id'.
+    destruct (stack σ !! stk_id') eqn:HstkLookup.
+    - rewrite lookup_fmap. rewrite HstkLookup. simpl.
+    destruct (Z.eqb stk_id stk_id') eqn:Hstkid.
+      + rewrite Z.eqb_eq in Hstkid. subst stk_id'. rewrite lookup_fmap. rewrite lookup_insert. simpl. rewrite lookup_fmap. rewrite lookup_insert. simpl.
+
+  Admitted.
+
+  Lemma stack_lvar_upd σ stk_id stk_frm x v :
+    stack_own[ stk_id, stk_frm ] ∗ stack_interp (stack σ) ==∗ 
+    stack_own[stk_id, StackFrame (<[x := v]> stk_frm.(locals)) ] ∗ stack_interp (stack (update_lvar σ x stk_id v)).
+  Proof.
+    iIntros "[Hstk Hstack]".
+    iCombine "Hstack" "Hstk" as "Hcomb".
+      iPoseProof (own_update heap_stack_name 
+          (● to_stackR (stack σ) ⋅ ◯ to_stackR {[stk_id := stk_frm]})
+          (● to_stackR (stack (update_lvar σ x stk_id v)) ⋅ ◯ to_stackR {[stk_id := {| locals := <[x:=v]> (locals stk_frm) |}]})
+
+           with "Hcomb"
+      ) 
+          as "Hcomb2".
+      { apply stack_upd_valid. }
+      iDestruct "Hcomb2" as ">[Hstack Hstk]".
+      iModIntro. iFrame.
+  Qed.
+
+  (* This needs formalization of some inductive property that σ.(max_stack_id) is always unallocated. *)
+  Lemma stack_new_stk_frm_upd σ stk_frm' :
+    stack_interp (stack σ) ==∗
+    stack_interp (update_stack σ (Z.to_nat σ.(max_stack_id) + 1) stk_frm').(stack) ∗ stack_own[Z.to_nat σ.(max_stack_id) + 1, stk_frm'].
+  Proof.
+    Admitted.
+
+  Lemma heap_upd_valid σ l fld v v':
+    ● to_heapUR (global_heap σ) ⋅ ◯ {[heap_addr_constr l fld := (1%Qp, to_agree v)]} ~~>
+    ● to_heapUR (global_heap (update_heap σ l fld v')) ⋅ ◯ {[heap_addr_constr l fld := (1%Qp, to_agree v')]}.
+  Proof.
+  Admitted.
+
+
+  Lemma heap_l_upd σ l fld v v' : 
+    l#fld ↦{1%Qp } v ∗ heap_interp (global_heap σ) ==∗
+    l#fld ↦{1%Qp } v' ∗ heap_interp (global_heap (update_heap σ l fld v')).
+  Proof.
+    iIntros "[Hl Hhp]".
+    iCombine "Hhp" "Hl" as "Hcomb".
+    iPoseProof (own_update heap_heap_name
+      (● to_heapUR (global_heap σ) ⋅ ◯ {[(heap_addr_constr l fld) := (1%Qp, to_agree v)]})
+      (● to_heapUR (global_heap (update_heap σ l fld v')) ⋅ ◯ {[(heap_addr_constr l fld) := (1%Qp, to_agree v')]})
+      with "Hcomb"
+    ) as "Hcomb2".
+    { apply heap_upd_valid. }
+    iDestruct "Hcomb2" as ">[Hhp Hl]".
+    iModIntro. iFrame.
+  Qed.
+
+  Lemma heap_alloc_valid :
+    ∀ fs σ, 
+    let l := fresh_loc (global_heap σ) in
+    let σ' := fold_right 
+        (λ f_v acc ,
+          update_heap acc l f_v.1 f_v.2) 
+      σ fs  in
+    let fs_heap_map := fold_right
+        (λ f_v acc, <[heap_addr_constr l f_v.1:=f_v.2]> acc) 
+      ∅ fs in
+    ● to_heapUR (global_heap σ) ~~> ● to_heapUR (global_heap σ') ⋅ ◯ to_heapUR fs_heap_map.
+  Proof. 
+    induction fs as [ | fs fss IH].
+
+    - intros σ l σ' fs_heap_map. simpl in fs_heap_map. subst fs_heap_map. 
+      (* set (σ' := (fold_left
+        (λ (acc : lang.state) (f_v : fld_name * lang.val), update_heap acc l f_v.1 f_v.2)
+        [] σ0)). *)
+      
+      simpl in σ'. subst σ'. unfold to_heapUR. rewrite fmap_empty. apply  auth_update_alloc. unfold ε. 
+        set (hp1 := (λ v : lang.val, to_heap_cellR v) <$> global_heap σ : gmapUR heap_addr heap_cellR).
+        assert (hp1 = ε ⋅ hp1 ) as H0. { admit. }
+        rewrite -> H0 at 2.
+        assert ((∅ : gmapUR heap_addr heap_cellR) = ε ⋅ (∅ : gmapUR heap_addr heap_cellR)) as H1. { admit. }
+        rewrite H1.
+      apply (op_local_update_discrete hp1 ε ∅).
+      intros. simpl. rewrite left_id. done.
+
+      - intros σ l σ' fs_heap_map. simpl in fs_heap_map.
+       simpl in σ'.
+       specialize (IH σ).
+
+      unfold l in IH.
+      remember (fresh_loc (global_heap σ)) as l0 eqn:Hl.
+
+
+      remember (foldr
+          (λ f_v acc, update_heap acc l0 f_v.1 f_v.2)
+        σ fss
+      ) as σ0 eqn:Hσ.
+
+      remember (foldr
+        (λ f_v acc, <[heap_addr_constr l0 f_v.1:=f_v.2]> acc
+        ) ∅ fss
+      ) as fs_heap_map0 eqn:Hfs.
+
+      subst l.
+
+
+      remember σ' as σ'0 eqn:Hσ'.
+      subst σ'.
+      rewrite <- Hσ in Hσ'.
+
+      remember fs_heap_map as fs_heap_map'0 eqn:Hfs'.
+      subst fs_heap_map.
+      rewrite <- Hfs in Hfs'.
+      subst σ'0.
+      subst fs_heap_map'0.
+      rewrite IH.
+      unfold update_heap. simpl.
+      apply auth_update.
+      unfold to_heapUR at 3 4.
+      rewrite fmap_insert. rewrite fmap_insert.
+      apply alloc_local_update.
+      
+      { admit. }
+      { admit. }
+  Admitted.
+
+End updates.

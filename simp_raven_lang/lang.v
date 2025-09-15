@@ -14,7 +14,12 @@ Inductive un_op : Set :=
 Section expr.
 
 Inductive typ :=
-| TpInt | TpLoc | TpBool.
+| TpInt | TpLoc | TpBool | TpUnit.
+
+Global Instance typ_eq_decision : EqDecision typ.
+Proof. solve_decision. Qed.
+
+Scheme Equality for typ.
 
 Record loc := Loc { loc_car : Z }.
 
@@ -452,4 +457,18 @@ Lemma expr_step_val_unique e stk_frm v v0:
 Proof. 
   Admitted.
 
+
+Lemma Forall2_expr_step_val_unique :
+  ∀ args stk_frm vals1 vals2,
+  Forall2 (λ e v, expr_step e stk_frm (Val v)) args vals1 →
+  Forall2 (λ e v, expr_step e stk_frm (Val v)) args vals2 →
+  vals1 = vals2.
+Proof.
+  induction args; intros stk_frm vals1 vals2 H1 H2.
+  - inversion H1; inversion H2; reflexivity.
+  - inversion H1; inversion H2; subst.
+    f_equal.
+    + eapply expr_step_val_unique; eauto.
+    + eapply IHargs; eauto.
+Qed.
 

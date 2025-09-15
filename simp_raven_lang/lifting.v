@@ -5,8 +5,8 @@ From iris.program_logic Require Import ectx_lifting.
 (* From iris_simp_lang Require Import notation tactics class_instances. *)
 (* From iris_simp_lang Require Import heap_lib. *)
 From iris Require Import options.
-From raven_iris.simp_raven_lang Require Import ghost_state.
-From stdpp Require Import gmap list.
+From raven_iris.simp_raven_lang Require Import lang ghost_state.
+From stdpp Require Import gmap list fin_maps.
 Import uPred.
 Import weakestpre.
 
@@ -92,134 +92,6 @@ Section lifting.
     
       + iApply "HΦ". iFrame.
   Qed.
-
-
-  Lemma stack_upd_valid σ stk_id stk_frm v val:
-    let σ' := update_lvar σ v stk_id val in
-      ● to_stackR (stack σ) ⋅ ◯ to_stackR {[stk_id := stk_frm]} ~~>
-      ● to_stackR (stack σ') ⋅ ◯ to_stackR {[stk_id := {| locals := <[v:=val]> (locals stk_frm) |}]}.
-  Proof.
-    intros σ'.
-    apply auth_update.
-    apply iris.algebra.gmap.gmap_local_update.
-    intros stk_id'.
-    destruct (stack σ !! stk_id') eqn:HstkLookup.
-    - rewrite lookup_fmap. rewrite HstkLookup. simpl.
-    destruct (Z.eqb stk_id stk_id') eqn:Hstkid.
-      + rewrite Z.eqb_eq in Hstkid. subst stk_id'. rewrite lookup_fmap. rewrite lookup_insert. simpl. rewrite lookup_fmap. rewrite lookup_insert. simpl.
-
-  Admitted.
-
-  Lemma stack_lvar_upd σ stk_id stk_frm x v :
-    stack_own[ stk_id, stk_frm ] ∗ stack_interp (stack σ) ==∗ 
-    stack_own[stk_id, StackFrame (<[x := v]> stk_frm.(locals)) ] ∗ stack_interp (stack (update_lvar σ x stk_id v)).
-  Proof.
-    iIntros "[Hstk Hstack]".
-    iCombine "Hstack" "Hstk" as "Hcomb".
-      iPoseProof (own_update heap_stack_name 
-          (● to_stackR (stack σ) ⋅ ◯ to_stackR {[stk_id := stk_frm]})
-          (● to_stackR (stack (update_lvar σ x stk_id v)) ⋅ ◯ to_stackR {[stk_id := {| locals := <[x:=v]> (locals stk_frm) |}]})
-
-           with "Hcomb"
-      ) 
-          as "Hcomb2".
-      { apply stack_upd_valid. }
-      iDestruct "Hcomb2" as ">[Hstack Hstk]".
-      iModIntro. iFrame.
-  Qed.
-
-  Lemma heap_upd_valid σ l fld v v':
-    ● to_heapUR (global_heap σ) ⋅ ◯ {[heap_addr_constr l fld := (1%Qp, to_agree v)]} ~~>
-    ● to_heapUR (global_heap (update_heap σ l fld v')) ⋅ ◯ {[heap_addr_constr l fld := (1%Qp, to_agree v')]}.
-  Proof.
-  Admitted.
-
-
-  Lemma heap_l_upd σ l fld v v' : 
-    l#fld ↦{1%Qp } v ∗ heap_interp (global_heap σ) ==∗
-    l#fld ↦{1%Qp } v' ∗ heap_interp (global_heap (update_heap σ l fld v')).
-  Proof.
-    iIntros "[Hl Hhp]".
-    iCombine "Hhp" "Hl" as "Hcomb".
-    iPoseProof (own_update heap_heap_name
-      (● to_heapUR (global_heap σ) ⋅ ◯ {[(heap_addr_constr l fld) := (1%Qp, to_agree v)]})
-      (● to_heapUR (global_heap (update_heap σ l fld v')) ⋅ ◯ {[(heap_addr_constr l fld) := (1%Qp, to_agree v')]})
-      with "Hcomb"
-    ) as "Hcomb2".
-    { apply heap_upd_valid. }
-    iDestruct "Hcomb2" as ">[Hhp Hl]".
-    iModIntro. iFrame.
-  Qed.
-
-  Lemma heap_alloc_valid :
-    ∀ fs σ, 
-    let l := fresh_loc (global_heap σ) in
-    let σ' := fold_right 
-        (λ f_v acc ,
-          update_heap acc l f_v.1 f_v.2) 
-      σ fs  in
-    let fs_heap_map := fold_right
-        (λ f_v acc, <[heap_addr_constr l f_v.1:=f_v.2]> acc) 
-      ∅ fs in
-    ● to_heapUR (global_heap σ) ~~> ● to_heapUR (global_heap σ') ⋅ ◯ to_heapUR fs_heap_map.
-  Proof. 
-    induction fs as [ | fs fss IH].
-
-    - intros σ l σ' fs_heap_map. simpl in fs_heap_map. subst fs_heap_map. 
-      (* set (σ' := (fold_left
-        (λ (acc : lang.state) (f_v : fld_name * lang.val), update_heap acc l f_v.1 f_v.2)
-        [] σ0)). *)
-      
-      simpl in σ'. subst σ'. unfold to_heapUR. rewrite fmap_empty. apply  auth_update_alloc. unfold ε. 
-        set (hp1 := (λ v : lang.val, to_heap_cellR v) <$> global_heap σ : gmapUR heap_addr heap_cellR).
-        assert (hp1 = ε ⋅ hp1 ) as H0. { admit. }
-        rewrite -> H0 at 2.
-        assert ((∅ : gmapUR heap_addr heap_cellR) = ε ⋅ (∅ : gmapUR heap_addr heap_cellR)) as H1. { admit. }
-        rewrite H1.
-      apply (op_local_update_discrete hp1 ε ∅).
-      intros. simpl. rewrite left_id. done.
-
-      - intros σ l σ' fs_heap_map. simpl in fs_heap_map.
-       simpl in σ'.
-       specialize (IH σ).
-
-      unfold l in IH.
-      remember (fresh_loc (global_heap σ)) as l0 eqn:Hl.
-
-
-      remember (foldr
-          (λ f_v acc, update_heap acc l0 f_v.1 f_v.2)
-        σ fss
-      ) as σ0 eqn:Hσ.
-
-      remember (foldr
-        (λ f_v acc, <[heap_addr_constr l0 f_v.1:=f_v.2]> acc
-        ) ∅ fss
-      ) as fs_heap_map0 eqn:Hfs.
-
-      subst l.
-
-
-      remember σ' as σ'0 eqn:Hσ'.
-      subst σ'.
-      rewrite <- Hσ in Hσ'.
-
-      remember fs_heap_map as fs_heap_map'0 eqn:Hfs'.
-      subst fs_heap_map.
-      rewrite <- Hfs in Hfs'.
-      subst σ'0.
-      subst fs_heap_map'0.
-      rewrite IH.
-      unfold update_heap. simpl.
-      apply auth_update.
-      unfold to_heapUR at 3 4.
-      rewrite fmap_insert. rewrite fmap_insert.
-      apply alloc_local_update.
-      
-      { admit. }
-      { admit. }
-  Admitted.
-
 
 
 
@@ -577,9 +449,180 @@ Section lifting.
         iModIntro. iSplitR; try done. iFrame. iApply "HΦ". iFrame.
   Qed.
 
+  Lemma wp_if_t e s1 s2 stk_id stk_frm p q v mask :
+    expr_step e stk_frm (Val (LitBool true)) ->
+    {{{ stack_own[ stk_id, stk_frm ] ∗ p }}} s1 @ mask {{{ RET v; q }}} -∗
+    {{{ stack_own[ stk_id, stk_frm ] ∗ p }}} RTIfS e s1 s2 stk_id @ mask {{{ RET v; q }}}.
+  Proof.
+    intros Hstp.
+    iIntros "#Hhoare".
+    iIntros (Φ). iModIntro. iIntros "[Hstk Hp] HΦ".
+    iApply wp_lift_base_step; first done.
+    iIntros (σ ns κ κs nt) "Hstate".
+    iDestruct "Hstate" as "[Hhp [Hproc Hstack]]".
+    iPoseProof (stack_interp_agreement with "Hstack Hstk") as "%HstkPure".
+    iApply fupd_mask_intro. { set_unfold. try done. }
+    
+    iIntros "Hfupd". iSplitR.
+    - iPureIntro. unfold base_reducible. exists [], s1, σ, [].
+    apply (RTIfSStep σ stk_id stk_frm e s1 s2 true); try done.
 
+    - iNext. iIntros (e2 σ2 efs) "%H Hcred".
+    inversion H; subst e0 s0 s3 stk_id0 σ0 κ e2 σ2 efs.
+    iMod "Hfupd".
+    iModIntro. iFrame. simpl. iFrame. 
+    rewrite HstkPure in H9. inversion H9. subst stk_frm0. clear H9.
+    pose proof (expr_step_val_unique e stk_frm (LitBool true) (LitBool b) Hstp H10).
+    inversion H0.
+    iApply ("Hhoare" with "[Hstk Hp]" ); try iFrame.
+  Qed.
 
+  Lemma wp_if_f e s1 s2 stk_id stk_frm p q v mask :
+    expr_step e stk_frm (Val (LitBool false)) ->
+    {{{ stack_own[ stk_id, stk_frm ] ∗ p }}} s2 @ mask {{{ RET v; q }}} -∗
+    {{{ stack_own[ stk_id, stk_frm ] ∗ p }}} RTIfS e s1 s2 stk_id @ mask {{{ RET v; q }}}.
+  Proof.
+    intros Hstp.
+    iIntros "#Hhoare".
+    iIntros (Φ). iModIntro. iIntros "[Hstk Hp] HΦ".
+    iApply wp_lift_base_step; first done.
+    iIntros (σ ns κ κs nt) "Hstate".
+    iDestruct "Hstate" as "[Hhp [Hproc Hstack]]".
+    iPoseProof (stack_interp_agreement with "Hstack Hstk") as "%HstkPure".
+    iApply fupd_mask_intro. { set_solver. }
+    
+    iIntros "Hfupd". iSplitR.
+    - iPureIntro. unfold base_reducible. exists [], s2, σ, [].
+    apply (RTIfSStep σ stk_id stk_frm e s1 s2 false); try done.
 
+    - iNext. iIntros (e2 σ2 efs) "%H Hcred".
+    inversion H; subst e0 s0 s3 stk_id0 σ0 κ e2 σ2 efs.
+    iMod "Hfupd".
+    iModIntro. iFrame. simpl. iFrame. 
+    rewrite HstkPure in H9. inversion H9. subst stk_frm0. clear H9.
+    pose proof (expr_step_val_unique e stk_frm (LitBool false) (LitBool b) Hstp H10).
+    inversion H0.
+    iApply ("Hhoare" with "[Hstk Hp]" ); try iFrame.
+  Qed.
+
+  Lemma Forall2_list_to_map_zip args arg_vals :
+    NoDup args ->
+    length args = length arg_vals →
+    Forall2
+      (λ var (val : lang.val),
+        @list_to_map lang.var lang.val (gmap lang.var lang.val) _ _ (zip args arg_vals) !! var = Some val)
+      args arg_vals.
+  Proof.
+    revert arg_vals.
+    induction args as [|x args IH]; intros [|v vs] HNoDup Hlen; simpl in *; try discriminate.
+    - constructor.
+    - constructor.
+      + simpl. rewrite lookup_insert; try done.
+
+      + pose proof HNoDup as HNoDup'. apply NoDup_cons_1_2 in HNoDup'. inversion Hlen. specialize (IH vs HNoDup' H0 ).
+      apply NoDup_cons_1_1 in HNoDup.
+      eapply Forall2_impl; [|exact IH].
+      intros y val Hlookup.
+      rewrite lookup_insert_ne; [done|]. simpl. simpl in Hlookup.
+      intros ->. apply HNoDup.
+      apply elem_of_list_to_map_2 in Hlookup.
+      apply elem_of_zip_l in Hlookup.
+      exact Hlookup.
+  Qed.
+
+  Lemma wp_call stk_id stk_frm args arg_vals proc x ret_val proc_entry mask p q:
+    NoDup (proc_args proc_entry).*1 ->
+    length args = length (proc_entry.(proc_args)) ->
+    Forall2 (fun expr val => expr_step expr stk_frm (Val val)) args arg_vals ->
+    (∀ stk_id' stk_frm',
+      ⌜Forall2 (fun var val => stk_frm'.(locals) !! var = Some val) proc_entry.(proc_args).*1 arg_vals⌝ -∗
+        (∃ stk_frm'',
+        {{{ stack_own[ stk_id', stk_frm' ] ∗ p }}} 
+            to_rtstmt stk_id' proc_entry.(proc_stmt) @ mask 
+        {{{ RET (LitUnit); stack_own[ stk_id', stk_frm'' ] ∗ ⌜ (stk_frm''.(locals) !! "#ret_val" = Some ret_val) ⌝ ∗ q }}}) ) -∗
+
+    {{{ stack_own[ stk_id, stk_frm ] ∗ (proc_tbl_chunk proc proc_entry) ∗ p }}} 
+        RTCall x proc args stk_id @ mask 
+    {{{ RET LitUnit; stack_own[ stk_id, StackFrame (<[x:=ret_val]>stk_frm.(locals)) ] ∗ q }}}.
+  Proof.
+    intros HNoDup Hlen Harg_evals.
+
+    iIntros "#Hproc_body".
+    iIntros (Φ). iModIntro. iIntros "[Hstk [Hproc_tbl Hp]] HΦ".
+
+    iApply wp_lift_base_step; first done.
+    iIntros (σ1 ns κ κs nt) "Hstate".
+    iDestruct "Hstate" as "[Hhp [Hproc Hstack]]".
+    iPoseProof (stack_interp_agreement with "Hstack Hstk") as "%HstkPure".
+    iPoseProof (proc_tbl_interp_agreement with "Hproc Hproc_tbl") as "%HprocPure".
+    iApply fupd_mask_intro. { set_solver. }
+
+    iIntros "Hfupd". iSplitR.
+
+    - iPureIntro. unfold base_reducible.
+    
+    set new_stk_id := (fresh_stk_id σ1).1.
+    set σ' :=  (fresh_stk_id σ1).2.
+    set new_stk_frame := StackFrame 
+      (list_to_map (zip (map fst proc_entry.(proc_args)) arg_vals)).
+    set σ'' := update_stack σ' new_stk_id new_stk_frame.
+
+    set new_stmt := to_rtstmt new_stk_id proc_entry.(proc_stmt).
+    
+    exists [], (RTActiveCall x new_stmt new_stk_id stk_id), σ'', [].
+
+    apply (RTCallStep σ1 stk_id stk_frm x proc args arg_vals proc_entry); try done.
+
+  - iNext. iIntros (e2 σ2 efs) "%H Hcred".
+    inversion H; subst proc0 args0 stk_id0 σ1 κ σ2 e2 efs.
+    iMod "Hfupd". 
+    iPoseProof ((stack_new_stk_frm_upd σ new_stk_frame) with "Hstack") as ">[Hstack' Hstk']".
+    
+    simpl; iFrame. iModIntro.
+
+    iApply (wp_bind (fill_item (ActiveCallCtx x (Z.to_nat (max_stack_id σ) + 1) stk_id)) _ _ _ _).
+    set stk_id' := (Z.to_nat (max_stack_id σ) + 1).
+    iSpecialize ("Hproc_body" $! stk_id' new_stk_frame).
+    rewrite HprocPure in H10. inversion H10. subst procedure. clear H10.
+    rewrite HstkPure in H4. inversion H4. subst stk_frm0. clear H4.
+
+    iPoseProof ("Hproc_body" with "[%]") as "Hproc_body'".
+    { simpl. 
+      assert (arg_vals0 = arg_vals). { apply (Forall2_expr_step_val_unique args stk_frm); try done . }
+      subst arg_vals0.
+      apply Forall2_list_to_map_zip; try done.
+
+      { apply Forall2_length in Harg_evals. rewrite map_length. rewrite <- Hlen. exact Harg_evals. }
+
+    }
+    iClear "Hproc_body".
+    iDestruct "Hproc_body'" as (stk_frm'') "Hproc_body".
+    iApply ("Hproc_body" with "[Hstk' Hp]") .
+
+    + iFrame.
+
+    + clear H11 H12. iNext. simpl. iIntros "[Hstk'' [%Hret Hq]]". 
+      iApply wp_lift_atomic_base_step_no_fork; first done.
+      iIntros (σ1 ns0 κ κs0 nt0) "Hstate".
+      iDestruct "Hstate" as "[Hhp [Hproc Hstack]]".
+      iPoseProof (stack_interp_agreement with "Hstack Hstk") as "%HstkPure2".
+      iPoseProof (stack_interp_agreement with "Hstack Hstk''") as "%HstkPure3".
+      iPoseProof (stack_lvar_upd σ1 stk_id stk_frm x ret_val with "[Hstk Hstack ]" ) as "Hstk0"; [iFrame | ].
+
+      iDestruct "Hstk0" as ">[Hstk0 Hstack]".
+
+      iModIntro. iSplitR.
+      
+      * iPureIntro. unfold base_reducible.
+        (* destruct Hret as [ret_val' Hret]. *)
+        
+      exists [], (RTVal LitUnit), (update_lvar σ1 x stk_id ret_val), [].
+      apply (ActiveCallStep σ1 stk_id' stk_id x LitUnit stk_frm'' ret_val); try done.
+
+      * iNext. iIntros (e2 σ2 efs H') "Hcred'".
+       inversion H'; subst var callee_stk_id caller_stk_id σ0 κ e2 σ2 efs.
+       iSplitR; try done. iFrame. simpl. iModIntro. iApply "HΦ". iFrame.
+  Qed.
 
 End lifting.
 
