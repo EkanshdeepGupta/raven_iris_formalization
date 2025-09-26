@@ -284,8 +284,8 @@ Section MainTranslation.
           iEval (rewrite Hiota) in "Hcr".
           iPoseProof ((lc_split (ι1 - 1) 1) with "Hcr") as "[Hcr1 Hcr2]".
 
-          assert (Timeless u). { admit. }
-          iDestruct "Hinv" as ">Hinv".
+          iDestruct (lc_fupd_elim_later with "Hcr2 Hinv") as ">Hinv".
+
           iCombine "Hstk Hinv Hu" as "Hcomb".
           inversion Hwelldef as [ | | | | | | | | | | | | | inv args' stmt' HInvSet HargsWellDef HBodywelldef | ]; subst stmt' args'.
 
