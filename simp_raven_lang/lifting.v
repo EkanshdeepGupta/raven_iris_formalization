@@ -42,7 +42,7 @@ Section lifting.
   Lemma wp_heap_wr stk_id stk_frm v e val l f x msk :
     {{{ stack_own[ stk_id, stk_frm] ∗ l#f ↦{1%Qp} x ∗ ⌜stk_frm.(locals) !! v = Some (LitLoc l)⌝ ∗ ⌜expr_step e stk_frm (Val val)⌝}}}
       (RTFldWr v f e stk_id) @ msk
-    {{{RET LitUnit; stack_own[ stk_id, stk_frm] ∗ l#f ↦{1%Qp} val}}}.
+    {{{RET LitUnit; stack_own[ stk_id, stk_frm] ∗ l#f ↦{1%Qp} val ∗ £1 }}}.
     (* Unset Printing Notations. *)
   Proof.
     iIntros (Φ) "[Hstk [Hl [%He %He2]]] HΦ" .
@@ -94,13 +94,10 @@ Section lifting.
   Qed.
 
 
-
-
-
   Lemma wp_assign stk_id stk_frm v v' e msk:
     {{{ stack_own[ stk_id, stk_frm] ∗ ⌜expr_step e stk_frm (Val v')⌝}}}
       (RTAssign v e stk_id) @ msk
-    {{{ RET LitUnit; stack_own[ stk_id, StackFrame (<[v:=v']>stk_frm.(locals)) ] }}}.
+    {{{ RET LitUnit; stack_own[ stk_id, StackFrame (<[v:=v']>stk_frm.(locals)) ] ∗ £1 }}}.
   Proof.
     iIntros (Φ) "[Hstk %He] HΦ".
     iApply wp_lift_atomic_base_step_no_fork; first done.
@@ -150,7 +147,7 @@ Section lifting.
   Lemma wp_heap_rd stk_id stk_frm fld e val l x msk q:
   {{{ stack_own[ stk_id, stk_frm ] ∗ ⌜expr_step e stk_frm (Val (LitLoc l))⌝ ∗ l#fld ↦{q%Qp} val }}}
       (RTFldRd x e fld stk_id) @ msk
-    {{{RET LitUnit; stack_own[ stk_id, StackFrame (<[x:=val]>stk_frm.(locals))] ∗ l#fld ↦{q%Qp} val}}}.
+    {{{RET LitUnit; stack_own[ stk_id, StackFrame (<[x:=val]>stk_frm.(locals))] ∗ l#fld ↦{q%Qp} val ∗ £1}}}.
   Proof.
     iIntros (Φ) "[Hstk [%HexprStep HHeap]] HΦ".
     iApply wp_lift_atomic_base_step_no_fork; first done.
@@ -209,7 +206,7 @@ Section lifting.
   Lemma wp_alloc stk_id stk_frm fs x msk:
     {{{ stack_own[ stk_id, stk_frm ] }}}
       (RTAlloc x fs stk_id) @ msk
-    {{{RET LitUnit; ∃ l: loc, stack_own[ stk_id, StackFrame (<[x:=LitLoc l]>stk_frm.(locals))] ∗ field_list_to_iprop l fs}}}.
+    {{{RET LitUnit; ∃ l: loc, stack_own[ stk_id, StackFrame (<[x:=LitLoc l]>stk_frm.(locals))] ∗ field_list_to_iprop l fs ∗ £1}}}.
   Proof.
     iIntros (Φ) "Hstk HΦ".
     iApply wp_lift_atomic_base_step_no_fork; first done.
@@ -284,7 +281,6 @@ Section lifting.
       iExists l. iFrame.
 
       clear H H0 H1.
-      iClear "Hcred".
       iInduction fs as [ | ] "IHfs".
       + simpl. done.
       +
@@ -343,7 +339,7 @@ Section lifting.
   Qed.
 
   Lemma wp_skip p mask stk_id :
-  {{{ p }}} RTSkipS stk_id @ mask {{{ RET lang.LitUnit; p }}}.
+  {{{ p }}} RTSkipS stk_id @ mask {{{ RET lang.LitUnit; p ∗ £1 }}}.
   Proof.
     iIntros (Φ) "HP HΦ".
     iApply wp_lift_atomic_base_step_no_fork; first done.
@@ -362,7 +358,7 @@ Section lifting.
   expr_step e3 stk_frm (Val v') ->
   {{{ stack_own[ stk_id, stk_frm ] ∗ l#fld ↦{1} v }}}
     RTCAS x e1 fld e2 e3 stk_id @ mask
-  {{{ RET lang.LitUnit; stack_own[ stk_id, StackFrame (<[x:=LitBool true]> stk_frm.(locals)) ] ∗ l#fld ↦{1} v'}}}.
+  {{{ RET lang.LitUnit; stack_own[ stk_id, StackFrame (<[x:=LitBool true]> stk_frm.(locals)) ] ∗ l#fld ↦{1} v' ∗ £1 }}}.
   Proof.
     intros He1 He2 He3.
     iIntros (Φ) "[Hstk Hl] HΦ".
@@ -412,7 +408,7 @@ Section lifting.
     not (v = v0) -> 
     {{{ stack_own[ stk_id, stk_frm ] ∗ l#fld ↦{1} v0 }}}
       RTCAS x e1 fld e2 e3 stk_id @ mask
-    {{{ RET lang.LitUnit; stack_own[ stk_id, StackFrame (<[x:=LitBool false]> stk_frm.(locals)) ] ∗ l#fld ↦{1} v0}}}.
+    {{{ RET lang.LitUnit; stack_own[ stk_id, StackFrame (<[x:=LitBool false]> stk_frm.(locals)) ] ∗ l#fld ↦{1} v0 ∗ £1 }}}.
   Proof.
     intros He1 He2 Hneq.
     iIntros (Φ) "[Hstk Hl] HΦ".
@@ -543,7 +539,7 @@ Section lifting.
 
     {{{ stack_own[ stk_id, stk_frm ] ∗ (proc_tbl_chunk proc proc_entry) ∗ p }}} 
         RTCall x proc args stk_id @ mask 
-    {{{ RET LitUnit; stack_own[ stk_id, StackFrame (<[x:=ret_val]>stk_frm.(locals)) ] ∗ q }}}.
+    {{{ RET LitUnit; stack_own[ stk_id, StackFrame (<[x:=ret_val]>stk_frm.(locals)) ] ∗ q ∗ £1}}}.
   Proof.
     intros HNoDup Hlen Harg_evals.
 
