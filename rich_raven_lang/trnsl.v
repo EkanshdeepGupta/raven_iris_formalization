@@ -263,12 +263,13 @@ Section MainTranslation.
           destruct (trnsl_assertion Γ (LStack stk) stk_id mp) eqn:Hstack.
           2 : { simpl in Hstack. inversion Hstack. }
 
-          simpl. rewrite HinvBody. rewrite Hinv_record.
+          simpl. rewrite HinvBody. 
            destruct (trnsl_assertion Γ p stk_id mp) eqn:Hp, (trnsl_assertion Γ q stk_id mp) eqn:Hq; try done.
            
            iIntros "[[Hstk [#H Hu]] Hcr]".
            (* unfold trnsl_hoare_triple in IH. *)
-           assert (trnsl_stmt stmt = None'). { admit. }
+           assert (trnsl_stmt stmt = None'). {
+            apply trnsl_stmt_trnsl_atomic_block_none. simpl in Ht. exact Ht. }
            iEval (rewrite H) in "IH".
            (* rewrite Hp Hq in IHHbody. *)
 
@@ -303,10 +304,11 @@ Section MainTranslation.
         }
         
         { 
-          assert (trnsl_stmt stmt = Some' s). { admit. }
+          assert (trnsl_stmt stmt = Some' s). {
+            apply trnsl_stmt_trnsl_atomic_block_some. simpl in Ht. exact Ht. }
           simpl.
           iEval (rewrite H HinvBody) in "IH" .
-          iEval (rewrite Hinv_record).
+          (* iEval (rewrite Hinv_record). *)
           destruct (trnsl_assertion Γ p stk_id mp) eqn:Hp, (trnsl_assertion Γ q stk_id mp) eqn:Hq; try done.
           iIntros (Φ).
           iModIntro.
@@ -318,9 +320,8 @@ Section MainTranslation.
           iEval (rewrite Hiota) in "Hcr".
 
           iPoseProof ((lc_split (ι1 - 1) 1) with "Hcr") as "[Hcr1 Hcr2]".
-          
-          assert (Timeless u). { admit. }
-          iInv "HInv" as ">HInvBody".
+
+          iInv "HInv" as "HInvBody".
           { 
             (* namespace *) admit.
           }
@@ -329,11 +330,13 @@ Section MainTranslation.
             (* atomicity *) admit. 
           }
 
+          iDestruct (lc_fupd_elim_later with "Hcr2 HInvBody") as ">HInvBody".
+
           iCombine "Hstk HInvBody Hu" as "Hcomb".
           (* iCombine "Hcomb1"  as "Hcomb2". *)
           
-          assert (inv_set_to_namespace (mask ∖ {[invr]}) = inv_set_to_namespace mask ∖ ↑inv_namespace_map invr). { admit. }
-          rewrite H1; destruct H1.
+          assert (inv_set_to_namespace (mask ∖ {[invr]}) = inv_set_to_namespace mask ∖ ↑inv_namespace_map invr) as H0. { admit. }
+          rewrite H0; destruct H0.
 
           inversion Hwelldef as [ | | | | | | | | | | | | | inv args' stmt' HInvSet HargsWellDef HBodywelldef | ]; subst stmt' args'.
           iApply ("IH" with "[%] [%] [Hcomb Hcr1]"); try iFrame; try done.
@@ -505,7 +508,7 @@ Section MainTranslation.
           rewrite <- H1. iFrame.
 
           + simpl. destruct a as [fld val].
-          assert (stmt_well_defined ρ (Alloc x fld_vals)) as Hwell_def'. { admit. }
+          assert (stmt_well_defined ρ (Alloc x fld_vals)) as Hwell_def'. { apply (alloc_stmt_well_defined _ _ fld val). exact Hwelldef. }
           destruct (trnsl_assertion Γ (field_list_to_assertion (LVar lvar_x) fld_vals) stk_id mp' ) eqn:Htrfl.
           
             * simpl. rewrite Htrfl.
@@ -514,7 +517,7 @@ Section MainTranslation.
               iDestruct "Hhp" as "[Hhpl Hhpfvs]".
               iPoseProof ("IH2" with "Hstk Hhpfvs") as "[IH3 IH3']". 
               iFrame. iExists l. 
-              assert (trnsl_lval (trnsl_val val) = val) as H1. { admit. } 
+              assert (trnsl_lval (trnsl_val val) = val) as H1. { apply trnsl_lval_trnsl_val_inverse. } 
               rewrite H1. iFrame.
               iPureIntro. 
               unfold LExpr_holds.
@@ -560,7 +563,14 @@ Section MainTranslation.
             iPoseProof ("IH'" with "[%] Hu0") as ">IHH"; try done.
             iApply ("IH1'" with "[%] IHH"); try done.
 
-          + destruct (trnsl_assertion Γ a1 stk_id mp) eqn:Ha1, (trnsl_assertion Γ a3 stk_id mp) eqn: Ha3; try done. admit.
+          + destruct (trnsl_assertion Γ a1 stk_id mp) eqn:Ha1, (trnsl_assertion Γ a3 stk_id mp) eqn: Ha3; try done.
+
+            iIntros (Φ) "!> [Hu0 Hcr] HΦ".
+            iApply wp_fupd.
+            iApply ("IH'" $! Henv with "[$Hu0 $Hcr]").
+            iNext. iIntros "Hmid".
+            iPoseProof ("IH1'" $! Henv with "Hmid") as "Hpost".
+            iMod "Hpost". iModIntro. iApply "HΦ". iFrame.
 
           + destruct (trnsl_assertion Γ a1 stk_id mp) eqn:Ha1, (trnsl_assertion Γ a3 stk_id mp) eqn: Ha3; try done.
           simpl.
@@ -568,7 +578,10 @@ Section MainTranslation.
             { iApply "IH'"; try done. }
             { iApply "IH1'"; try done. }
 
-        - admit.
+        - assert (is_Some (trnsl_assertion Γ a2 stk_id mp )) as Hassert. 
+          { apply trnsl_assertion_is_some. }
+          destruct Hassert. rewrite H6 in Ha2. discriminate.
+
            (* Case: trnsl_assertion a2 = None; *)
            (* have to ensure this case cannot arise, perhaps by formalizing type soundness of a2 and mp. *)
       }
@@ -589,26 +602,29 @@ Section MainTranslation.
         iDestruct "He1" as (l) "[%He1 Hl]".
         assert (interp_lexpr (LVal old_val) mp = Some old_val) as Hinterp_old; try done.
         assert (interp_lexpr (LVal new_val) mp = Some new_val) as Hinterp_new; try done.
-        pose proof (trnsl_expr_interp_lexpr_compatibility _ _ _ _ _ H1 Hinterp_old) as Hexpr_step_e2.
-        pose proof (trnsl_expr_interp_lexpr_compatibility _ _ _ _ _ H2 Hinterp_new) as Hexpr_step_e3.
+        pose proof (trnsl_expr_interp_lexpr_compatibility _ _ _ _ _ H2 Hinterp_old) as Hexpr_step_e2.
+        pose proof (trnsl_expr_interp_lexpr_compatibility _ _ _ _ _ H3 Hinterp_new) as Hexpr_step_e3.
         unfold LExpr_holds in He1. simpl in He1.
         destruct (interp_lexpr lexpr1 mp) eqn:Hlexpr1.
         2 : { 
             (* Make sure interp_lexpr lexpr1 is not None *)
-            admit. 
+            assert (inf_lexpr σ lexpr1 = Some TpLoc) as Hlexpr_tp.  { apply (lexpr_expr_typ_compat ρ _ stk e1); try done. }
+            assert (∃ val, interp_lexpr lexpr1 mp = Some val) as Hlexpr_interp. { apply (lexpr_typcheck_well_defined σ _ _ TpLoc); try done. }
+            destruct Hlexpr_interp as [val0 Hlexpr_inter].
+            rewrite Hlexpr_inter in Hlexpr1. discriminate.
         }
         
         injection He1 as He1.
         destruct (val_beq v0 (LitLoc l)) eqn:Hv0_l; try done.
         apply val_beq_eq in Hv0_l. rewrite Hv0_l in Hlexpr1.
         
-        pose proof (trnsl_expr_interp_lexpr_compatibility _ _ _ _ _ H0 Hlexpr1) as Hexpr_step_e1.
+        pose proof (trnsl_expr_interp_lexpr_compatibility _ _ _ _ _ H1 Hlexpr1) as Hexpr_step_e1.
 
         iApply (wp_cas_succ v e1 fld e2 e3 stk_id (symb_stk_to_stk_frm stk mp) l (trnsl_lval old_val) (trnsl_lval new_val) with "[Hstk Hl]"); try done.
         
         { assert (trnsl_lval (LitLoc l) = (lang.LitLoc l)).
         - simpl. destruct l. simpl. done.
-        - rewrite -> H4 in *. done. }
+        - rewrite -> H5 in *. done. }
 
         { iFrame. }
 
@@ -623,7 +639,7 @@ Section MainTranslation.
           iPureIntro. apply EqOp_refl. 
           unfold LExpr_holds. simpl. 
           rewrite <- (fresh_var_trnsl_expr_invariant stk lvar_v e1 lexpr1 mp (LitBool true)); try done. rewrite Hlexpr1. 
-          assert (internal_loc_beq l l = true) as H_l_l. { admit. } 
+          assert (internal_loc_beq l l = true) as H_l_l. { apply internal_loc_beq_refl. } 
           rewrite H_l_l. done.
         }
 
@@ -637,24 +653,27 @@ Section MainTranslation.
         iIntros (Φ). iModIntro. iIntros "[[Hstk [He1 %Hneq]] Hcr] HΦ".
         iDestruct "He1" as (l) "[%He1 Hl]".
         assert (interp_lexpr (LVal old_val2) mp = Some old_val2) as Hinterp_old; try done.
-        pose proof (trnsl_expr_interp_lexpr_compatibility _ _ _ _ _ H1 Hinterp_old) as Hexpr_step_e2.
+        pose proof (trnsl_expr_interp_lexpr_compatibility _ _ _ _ _ H2 Hinterp_old) as Hexpr_step_e2.
         unfold LExpr_holds in He1. simpl in He1.
         destruct (interp_lexpr lexpr1 mp) eqn:Hlexpr1.
         2 : { 
             (* Make sure interp_lexpr lexpr1 is not None *)
-            admit. 
+            assert (inf_lexpr σ lexpr1 = Some TpLoc) as Hlexpr_tp.  { apply (lexpr_expr_typ_compat ρ _ stk e1); try done. }
+            assert (∃ val, interp_lexpr lexpr1 mp = Some val) as Hlexpr_interp. { apply (lexpr_typcheck_well_defined σ _ _ TpLoc); try done. }
+            destruct Hlexpr_interp as [val0 Hlexpr_inter].
+            rewrite Hlexpr_inter in Hlexpr1. discriminate.
         }
         
         injection He1 as He1.
         destruct (val_beq v0 (LitLoc l)) eqn:Hv0_l; try done.
         apply val_beq_eq in Hv0_l. rewrite Hv0_l in Hlexpr1.
         
-        pose proof (trnsl_expr_interp_lexpr_compatibility _ _ _ _ _ H0 Hlexpr1) as Hexpr_step_e1.
+        pose proof (trnsl_expr_interp_lexpr_compatibility _ _ _ _ _ H1 Hlexpr1) as Hexpr_step_e1.
 
         iApply (wp_cas_fail v e1 fld e2 e3 stk_id (symb_stk_to_stk_frm stk mp) l (trnsl_lval old_val2) (trnsl_lval old_val) _ with "[Hstk Hl]"); try done.
         
-        - assert (trnsl_lval (LitLoc l) = (lang.LitLoc l)) as H3. { simpl. destruct l. simpl. done. }
-        { rewrite -> H3 in *. done. }
+        - assert (trnsl_lval (LitLoc l) = (lang.LitLoc l)) as H4. { simpl. destruct l. simpl. done. }
+        { rewrite -> H4 in *. done. }
 
         - unfold LExpr_holds in Hneq.
           simpl in Hneq. injection Hneq as Hneq.
@@ -954,14 +973,20 @@ Section MainTranslation.
           
           2 : {  
             (* trnsl_assertion (subst proc_pre subst_map') stk_id' mp CANNOT BE None *)
-            admit.
+            assert (is_Some (trnsl_assertion Γ (subst proc_pre subst_map') stk_id mp )) as Htrnsl_assertion. 
+            { apply trnsl_assertion_is_some. }
+            destruct Htrnsl_assertion as [v Htrnsl_assertion]. rewrite Htrnsl_assertion in Hproc_frame_pre. discriminate.
           }
 
           destruct (trnsl_assertion Γ (subst proc_post (<["#ret_val":=LVal (trnsl_val ret_val)]> subst_map')) stk_id mp) as [ proc_frame_post |] eqn: Hproc_frame_post.
 
           2 : {
             (* trnsl_assertion (subst proc_pre subst_map') stk_id' mp CANNOT BE None *)
-            admit. 
+            assert (is_Some (trnsl_assertion Γ (subst proc_post
+                (<["#ret_val":=LVal (trnsl_val ret_val)]>
+              subst_map')) stk_id mp )) as Htrnsl_assertion. 
+            { apply trnsl_assertion_is_some. }
+            destruct Htrnsl_assertion as [v Htrnsl_assertion]. rewrite Htrnsl_assertion in Hproc_frame_post. discriminate.
           }
 
         iApply (wp_call _ _ _ _ _ _ _ (lang.Proc proc_name proc_args proc_locals _) _ u1 proc_frame_post with "[] [Hstk Hproc_tbl Hu1]"); try iFrame; try done.
@@ -1035,6 +1060,12 @@ Section MainTranslation.
           }
         }
 
+        { (* proc body is not well-formed *)
+
+          inversion H4; subst s. inversion HPreCond; subst u; clear HPreCond. 
+          iIntros (Φ) "!> [[Hstk [Hfalse Hu]] Hcr]". done. 
+        }
+
         {   
           (* proc_body != Skip *)
         inversion H4; subst s. inversion HPreCond; subst u; clear HPreCond.
@@ -1055,14 +1086,19 @@ Section MainTranslation.
           
           2 : {  
             (* trnsl_assertion (subst proc_pre subst_map') stk_id' mp CANNOT BE None *)
-            admit.
+                        assert (is_Some (trnsl_assertion Γ (subst proc_pre subst_map') stk_id mp )) as Htrnsl_assertion. 
+            { apply trnsl_assertion_is_some. }
+            destruct Htrnsl_assertion as [v Htrnsl_assertion]. rewrite Htrnsl_assertion in Hproc_frame_pre. discriminate.
           }
 
           destruct (trnsl_assertion Γ (subst proc_post (<["#ret_val":=LVal (trnsl_val ret_val)]> subst_map')) stk_id mp) as [ proc_frame_post |] eqn: Hproc_frame_post.
 
           2 : {
             (* trnsl_assertion (subst proc_pre subst_map') stk_id' mp CANNOT BE None *)
-            admit. 
+            assert (is_Some (trnsl_assertion Γ (subst proc_post
+                (<["#ret_val":=LVal (trnsl_val ret_val)]> subst_map')) stk_id mp )) as Htrnsl_assertion. 
+            { apply trnsl_assertion_is_some. }
+            destruct Htrnsl_assertion as [v Htrnsl_assertion]. rewrite Htrnsl_assertion in Hproc_frame_post. discriminate.
           }
 
         iApply (wp_call _ _ _ _ _ _ _ (lang.Proc proc_name proc_args proc_locals _) _ u1 proc_frame_post with "[] [Hstk Hproc_tbl Hu1]"); try iFrame; try done.

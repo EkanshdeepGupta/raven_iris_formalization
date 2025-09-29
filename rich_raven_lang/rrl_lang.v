@@ -349,7 +349,7 @@ end.
   Admitted.
 
 Global Parameter proc_map : gmap proc_name ProcRecord.
-Axiom proc_map_set : dom proc_map = proc_set.
+(* Axiom proc_map_set : dom proc_map = proc_set. *)
 Axiom proc_args_unique : map_Forall (λ proc proc_entry, NoDup (proc_args_of proc_entry).*1 ) proc_map.
 
 Axiom proc_spec_stack_free : 
@@ -361,7 +361,7 @@ Record InvRecord := Inv {
 }.
 
 Global Parameter inv_map : gmap inv_name InvRecord.
-Axiom inv_map_set : dom inv_map = inv_set.
+(* Axiom inv_map_set : dom inv_map = inv_set. *)
 
 Record PredRecord := Pred {
   pred_args: list var;
@@ -369,7 +369,7 @@ Record PredRecord := Pred {
 }.
 
 Global Parameter pred_map : gmap pred_name PredRecord.
-Axiom pred_map_set : dom pred_map = pred_set.
+(* Axiom pred_map_set : dom pred_map = pred_set. *)
 
 Inductive expr_well_defined : lang.expr -> Prop :=
 | Constr e :
@@ -454,6 +454,12 @@ Inductive stmt_well_defined : pvar_typs -> stmt -> Prop :=
     stmt_well_defined ρ (Fpu e fld RAPack  old_val new_val)
 .
 
+Lemma alloc_stmt_well_defined ρ x fld val fld_vals : 
+  stmt_well_defined ρ (Alloc x ((fld, val) :: fld_vals)) -> stmt_well_defined ρ (Alloc x fld_vals).
+Proof.
+  Admitted.
+
+
 Section AtomicAnnotations.
   Parameter inv_namespace_map : inv_name -> namespace.
 
@@ -489,10 +495,6 @@ Section Translation.
     Lemma trnsl_lval_trnsl_val_inverse y: trnsl_lval (trnsl_val y) = y.
     Proof.
       Admitted.
-
-    Global Parameter trnsl_pred : pred_name -> list LExpr -> symb_map -> iProp Σ.
-    Global Parameter trnsl_inv : inv_name -> list LExpr -> symb_map -> iProp Σ.
-
 
     Definition stack: Type := gmap lang.var lvar.
 
@@ -734,19 +736,25 @@ Qed.
     apply eq_rect_transport_valid_inv. done.
   Qed.
 
-(* cast a chunk from RA_carrier to the correct cmra_car and carry the inG instance *)
-(* Definition cast_chunk `{!inGs Σ Gs} 
-           (Γ : Γ_type) (R : RA_Pack) (chunk : RA_carrier R)
-  : { i : I & cmra_car (Gs i) * inG Σ (Gs i) } :=
-  match Γ R with
-  | existT i (exist U (conj Heq_car Heq_cmra)) =>
-      let chunkU    := transport (eq_sym Heq_car) chunk in
-      let chunkCmra := transport (eq_sym (cmra_ucmra_car_eq U)) chunkU in
-      let chunkGs   := transport (f_equal cmra_car Heq_cmra) chunkCmra in
-      existT _ i (chunkGs, inGs_inG i)
-  end. *)
+  Lemma trnsl_stmt_trnsl_atomic_block_some c stmt :
+    (trnsl_atomic_block c false).1 = Some' stmt -> trnsl_stmt c = Some' stmt.
+  Proof.
+    Admitted.
 
-  Fixpoint trnsl_assertion (Γ: Γ_type) (a : assertion) (stk_id: stack_id) (mp : symb_map): option (iProp Σ) := match a with
+  Lemma trnsl_stmt_trnsl_atomic_block_none c :
+    (trnsl_atomic_block c false).1 = None' -> trnsl_stmt c = None'.
+  Proof.
+    Admitted.
+
+  
+
+  Global Parameter trnsl_pred : pred_name -> list LExpr -> symb_map -> iProp Σ.
+  Global Parameter trnsl_inv : inv_name -> list LExpr -> symb_map -> iProp Σ.
+
+  Fixpoint trnsl_assertion 
+      (* (Ωp: pred_name -> list LExpr -> symb_map -> iProp Σ)
+      (Ωi: inv_name -> list LExpr -> symb_map -> iProp Σ)  *)
+      (Γ: Γ_type) (a : assertion) (stk_id: stack_id) (mp : symb_map): option (iProp Σ) := match a with
     | LProc p p_e => 
       match p_e with
         Proc args locals pre post body => 
@@ -759,7 +767,9 @@ Qed.
             Some (proc_tbl_chunk p (
               lang.Proc p args locals stmt
             ))
-          | Error => None
+          | Error => 
+            Some (False)%I
+            (* None *)
           end
       end
     | LStack σ => Some (stack_frame_own stk_id (symb_stk_to_stk_frm σ mp))
@@ -789,7 +799,7 @@ Qed.
 
       Some (∃ l : lang.loc, (⌜LExpr_holds (LBinOp EqOp l_expr (LVal (LitLoc l))) mp⌝ ∗ (own (ghost_map l fld) chunkGs (inG0 := HinG)))%I)%I
     | LForall v body => 
-      match trnsl_assertion Γ body stk_id mp with
+      match trnsl_assertion (*Ωp Ωi*) Γ body stk_id mp with
       | None => None
       | Some body_expr => Some (∀ v':lang.val, body_expr)%I
       end
@@ -798,40 +808,75 @@ Qed.
       (* True *)
     | LExists v body => 
       Some (∃ v': val,
-        match trnsl_assertion Γ body stk_id (λ x, if String.eqb x v then v' else mp x) with
+        match trnsl_assertion (*Ωp Ωi*) Γ body stk_id (λ x, if String.eqb x v then v' else mp x) with
         | None => True
         | Some body_expr => body_expr
         end
     )%I
     
     | LImpl cnd body => 
-      match (trnsl_assertion Γ body stk_id mp) with
+      match (trnsl_assertion (*Ωp Ωi*) Γ body stk_id mp) with
       | None => None
       | Some body_expr => 
       Some (⌜LExpr_holds cnd mp⌝ -∗ body_expr)%I
       end
       (* True *)
     | LInv inv' args => 
-      match inv_map !! inv' with
-      | Some inv_record => 
-        let subst_map := list_to_map (zip inv_record.(inv_args) args) in
-        let subst_body := subst inv_record.(inv_body) subst_map in
-
+        (* Some (inv (inv_namespace_map inv') (Ωi inv' args mp)) *)
         Some (inv (inv_namespace_map inv') (trnsl_inv inv' args mp))
-
-        (* False *)
-      | None => None
-      end
-      (* False *)
-    | LPred pred args => Some (trnsl_pred pred args mp)
+    | LPred pred args => 
+        (* Some (Ωp pred args mp) *)
+        Some (trnsl_pred pred args mp)
     | LAnd a1 a2 => 
-      match (trnsl_assertion Γ a1 stk_id mp), (trnsl_assertion Γ a2 stk_id mp) with
+      match (trnsl_assertion (*Ωp Ωi*) Γ a1 stk_id mp), (trnsl_assertion (*Ωp Ωi*) Γ a2 stk_id mp) with
       | None, _ => None
       | _, None => None
       | Some a1, Some a2 => Some (a1 ∗ a2)%I
       end
     end
     .
+
+  Lemma trnsl_assertion_is_some Γ a stk_id mp:
+    is_Some (trnsl_assertion Γ a stk_id mp).
+  Proof.
+    revert Γ stk_id mp.
+    induction a; try done.
+    - destruct proc_entry. simpl. intros. destruct (trnsl_stmt body); try done.
+    - simpl. intros. destruct (Γ RAPack) as [i [U [Hdisc [Heq_car [Hindx [Hcomp Hval]]]]]]. done.
+    - intros. simpl. assert (is_Some (trnsl_assertion Γ a stk_id mp)). { apply IHa. }
+    destruct H. rewrite H. done.
+    - intros. simpl. assert (is_Some (trnsl_assertion Γ a stk_id mp)). { apply IHa. }
+    destruct H. rewrite H. done.
+    - intros. simpl. assert (is_Some (trnsl_assertion Γ a1 stk_id mp)). { apply IHa1. }
+    assert (is_Some (trnsl_assertion Γ a2 stk_id mp)). { apply IHa2. }
+    destruct H, H0. rewrite H H0. done.
+  Qed.
+
+  (* Context {Γ : Γ_type}. *)
+
+  (* Fixpoint Ωp (pred: pred_name) (args: list LExpr) (mp: symb_map) : iProp Σ := 
+    match pred_map !! pred with
+    | Some pred_rec =>
+      let subst_map := list_to_map (zip pred_rec.(pred_args) args) in
+      match trnsl_assertion Ωp Ωi Γ (subst pred_rec.(pred_body) subst_map) 0 mp with
+      | Some pred_body => pred_body
+      | None => False%I
+      end
+    | None => True%I
+    end
+  with
+    Ωi (inv : inv_name) (args : list LExpr) (mp : symb_map) : iProp Σ :=
+      match inv_map !! inv with
+      | Some inv_rec => 
+        let subst_map := list_to_map (zip inv_rec.(inv_args) args) in
+
+        match trnsl_assertion Ωp Ωi Γ (subst inv_rec.(inv_body) subst_map) 0 mp with
+        | Some inv_body => inv_body
+        | None => False%I 
+        end
+      | None => True%I
+      end. *)
+
 
 
   Axiom trnsl_pred_validity : forall (Γ: Γ_type) (pred : pred_name) (args : list LExpr) (stk_id: stack_id) (mp : symb_map), 
@@ -1222,6 +1267,7 @@ Section RavenLogic.
 
   | CASSuccRule ρ σ ι stk mask v e1 fld e2 e3 lvar_v lexpr1 old_val new_val :
     fresh_lvar stk lvar_v ->
+    inf_expr ρ e1 = Some (TpLoc) ->
     trnsl_expr_lExpr stk e1 = Some lexpr1 ->
     trnsl_expr_lExpr stk e2 = Some (LVal old_val) ->
     trnsl_expr_lExpr stk e3 = Some (LVal new_val) ->
@@ -1233,6 +1279,7 @@ Section RavenLogic.
 
   | CASFailRule ρ σ ι stk mask v e1 fld e2 e3 lvar_v lexpr1 old_val old_val2 :
     fresh_lvar stk lvar_v ->
+    inf_expr ρ e1 = Some (TpLoc) ->
     trnsl_expr_lExpr stk e1 = Some lexpr1 ->
     trnsl_expr_lExpr stk e2 = Some (LVal old_val2) ->
     stk_type_compat ρ σ stk ->
@@ -1339,3 +1386,7 @@ Proof.
   intros Hxy. subst. done.
 Qed.
 
+Lemma internal_loc_beq_refl l :
+  internal_loc_beq l l = true.
+Proof.
+  Admitted.
