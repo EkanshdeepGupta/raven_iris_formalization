@@ -624,6 +624,12 @@ Section Translation.
   | Fpu e fld RAPack old_val new_val => None'
   end.
 
+  Lemma trnsl_atomic_block_atomicity stmt s stk_id:
+    (trnsl_atomic_block stmt false).1 = Some' s -> Atomic WeaklyAtomic (to_rtstmt stk_id s).
+  Proof.
+    Admitted.
+ 
+
   Definition transport {A B : Type} (H : A = B) (x : A) : B :=
     eq_rect A id x _ H.
 
@@ -1386,7 +1392,3 @@ Proof.
   intros Hxy. subst. done.
 Qed.
 
-Lemma internal_loc_beq_refl l :
-  internal_loc_beq l l = true.
-Proof.
-  Admitted.

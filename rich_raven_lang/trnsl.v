@@ -24,6 +24,17 @@ Section MainTranslation.
     Definition inv_set_to_namespace (s : gset inv_name) : coPset :=
       set_fold (λ inv acc, acc ∪ ↑(inv_namespace_map inv)) ∅ s.
 
+    Lemma inv_map_subseteq invr mask:
+      invr ∈ mask -> ↑inv_namespace_map invr ⊆ inv_set_to_namespace mask.
+    Proof.
+      Admitted.
+
+    Lemma inv_map_set_minus_subseteq mask invr:
+      invr ∈ mask ->
+        (inv_set_to_namespace (mask ∖ {[invr]})) = inv_set_to_namespace mask ∖ ↑inv_namespace_map invr.
+    Proof.
+      Admitted.
+
     (* Definition symb_stk_to_stk_frm (stk : stack) (mp : symb_map) : stack_frame :=
       StackFrame (fmap (λ v, trnsl_lval (mp v)) stk). *)
 
@@ -81,6 +92,11 @@ Section MainTranslation.
       - apply internal_val_dec_bl in Hvb. done.
       - inversion H1.
     Qed.
+
+    Lemma internal_loc_beq_refl l :
+      internal_loc_beq l l = true.
+    Proof.
+      Admitted.
 
     Lemma val_beq_refl (v : val) : val_beq v v = true.
     Proof.
@@ -276,7 +292,7 @@ Section MainTranslation.
           iInv "H" as "Hinv".
           { 
             (* inv_namespace mask *)
-            admit.
+            apply inv_map_subseteq; try done.
           }
           rewrite <- Htrnsl_inv.
 
@@ -293,7 +309,7 @@ Section MainTranslation.
           
           
           iPoseProof ("IH" with  "[%] [%] [Hcomb Hcr1]") as "IH2"; try iFrame; try done.
-          assert ((inv_set_to_namespace (mask ∖ {[invr]})) = inv_set_to_namespace mask ∖ ↑inv_namespace_map invr) as HInvs. { admit. }
+          assert ((inv_set_to_namespace (mask ∖ {[invr]})) = inv_set_to_namespace mask ∖ ↑inv_namespace_map invr) as HInvs. { apply inv_map_set_minus_subseteq; try done. }
           rewrite HInvs.
           iDestruct "IH2" as ">IH2".
           iDestruct "IH2" as "[[IHs [IHH1 IHH] ] Hcr]".
@@ -323,11 +339,14 @@ Section MainTranslation.
 
           iInv "HInv" as "HInvBody".
           { 
-            (* namespace *) admit.
+            (* inv_namespace mask *)
+            apply inv_map_subseteq; try done.
           }
 
           {
-            (* atomicity *) admit. 
+            (* atomicity *)
+            simpl in Ht.
+            apply (trnsl_atomic_block_atomicity stmt); try done. 
           }
 
           iDestruct (lc_fupd_elim_later with "Hcr2 HInvBody") as ">HInvBody".
@@ -335,7 +354,7 @@ Section MainTranslation.
           iCombine "Hstk HInvBody Hu" as "Hcomb".
           (* iCombine "Hcomb1"  as "Hcomb2". *)
           
-          assert (inv_set_to_namespace (mask ∖ {[invr]}) = inv_set_to_namespace mask ∖ ↑inv_namespace_map invr) as H0. { admit. }
+          assert (inv_set_to_namespace (mask ∖ {[invr]}) = inv_set_to_namespace mask ∖ ↑inv_namespace_map invr) as H0. { apply inv_map_set_minus_subseteq; try done. }
           rewrite H0; destruct H0.
 
           inversion Hwelldef as [ | | | | | | | | | | | | | inv args' stmt' HInvSet HargsWellDef HBodywelldef | ]; subst stmt' args'.
@@ -578,12 +597,12 @@ Section MainTranslation.
             { iApply "IH'"; try done. }
             { iApply "IH1'"; try done. }
 
+        (* Case: trnsl_assertion a2 = None; *)
         - assert (is_Some (trnsl_assertion Γ a2 stk_id mp )) as Hassert. 
           { apply trnsl_assertion_is_some. }
           destruct Hassert. rewrite H6 in Ha2. discriminate.
 
-           (* Case: trnsl_assertion a2 = None; *)
-           (* have to ensure this case cannot arise, perhaps by formalizing type soundness of a2 and mp. *)
+           
       }
 
       5 : {
@@ -939,7 +958,7 @@ Section MainTranslation.
 
         assert (Forall2 (λ expr val, interp_lexpr expr mp = Some (trnsl_val val)) lexprs arg_vals) as Hlexprs_arg_vals.
           {
-            clear   Hwelldef H1  H4 H11 H12 subst_map HPreCond HPostCond.
+            clear Hwelldef H1  H4 H11 H12 subst_map HPreCond HPostCond.
             revert args arg_vals H2 Harg_vals.
             induction lexprs as [| le lexprs IH]; intros args arg_vals H2 Harg_vals.
             - destruct args; [| discriminate]. inversion Harg_vals. constructor.
@@ -1198,7 +1217,7 @@ Section MainTranslation.
        iModIntro. iExists l. iFrame. iPureIntro. exact Heq.
 
       }
-
-    Admitted.
+      
+    Qed.
   
   End MainTranslation.
