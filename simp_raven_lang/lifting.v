@@ -204,10 +204,12 @@ Section lifting.
   end.
 
   Lemma wp_alloc stk_id stk_frm fs x msk:
+    NoDup (fs.*1) ->
     {{{ stack_own[ stk_id, stk_frm ] }}}
       (RTAlloc x fs stk_id) @ msk
     {{{RET LitUnit; ∃ l: loc, stack_own[ stk_id, StackFrame (<[x:=LitLoc l]>stk_frm.(locals))] ∗ field_list_to_iprop l fs ∗ £1}}}.
   Proof.
+    intros HNoDup.
     iIntros (Φ) "Hstk HΦ".
     iApply wp_lift_atomic_base_step_no_fork; first done.
     iIntros (σ ns κ κs nt) "Hstate".
@@ -254,7 +256,7 @@ Section lifting.
         - simpl in σ'. subst σ'. done.
         - simpl in σ'. 
         remember (foldr (λ f_v acc, update_heap acc l f_v.1 f_v.2) σ fs) as σ0 eqn:Hσ.
-        unfold σ' in IHfs. rewrite IHfs. subst σ'. unfold update_heap. simpl. done.
+        unfold σ' in IHfs. rewrite IHfs. 2:{ inversion HNoDup. done. } subst σ'. unfold update_heap. simpl. done.
       }
       rewrite H0.
 
@@ -274,7 +276,7 @@ Section lifting.
       assert (procs σ'' = procs σ) as H1.
       { clear H H0. subst σ''. simpl. subst σ'. induction fs.
       - simpl. done.
-      - unfold fs_map in IHfs. simpl. apply IHfs.  }
+      - unfold fs_map in IHfs. simpl. apply IHfs. inversion HNoDup. done.  }
 
       rewrite H1. iFrame.
       iApply "HΦ".
@@ -299,7 +301,7 @@ Section lifting.
        iDestruct "HHp2" as "[HHp2 HHp3]".
        
        destruct a as [fld val]. simpl. iFrame.
-       iApply "IHfs". iApply "HHp3".
+       iApply "IHfs". { inversion HNoDup. done. } iApply "HHp3".
 
   Admitted.
 
