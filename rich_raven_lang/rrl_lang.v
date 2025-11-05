@@ -18,8 +18,10 @@ From raven_iris.simp_raven_lang Require Export lang lifting ghost_state.
 From raven_iris.simp_raven_lang Require Import ghost_state.
 
 From Coq.Program Require Import Wf.
+Require Import Coq.Logic.FunctionalExtensionality.
 
 Require Import Coq.Program.Equality.
+Require Import Coq.Init.Datatypes.
 
 Class inGs {I : Type} (Σ : gFunctors) (Gs : I → cmra) := {
   inGs_inG : ∀ i, inG Σ (Gs i)
@@ -344,17 +346,6 @@ Fixpoint subst (ra: assertion) (mp: gmap var LExpr) : assertion := match ra with
     LPred pred_name (map (fun expr => lexpr_subst expr mp) args)
 | LAnd a1 a2 => LAnd (subst a1 mp) (subst a2 mp)
 end.
-
-  Definition StackFree : assertion -> bool.
-  Admitted.
-
-Global Parameter proc_map : gmap proc_name ProcRecord.
-(* Axiom proc_map_set : dom proc_map = proc_set. *)
-Axiom proc_args_unique : map_Forall (λ proc proc_entry, NoDup (proc_args_of proc_entry).*1 ) proc_map.
-
-Axiom proc_spec_stack_free : 
-  map_Forall (λ proc proc_entry, StackFree (proc_precond_of proc_entry) /\ StackFree (proc_postcond_of proc_entry) ) proc_map.
-
 Record InvRecord := Inv {
   inv_args: list var;
   inv_body: assertion;
@@ -370,6 +361,95 @@ Record PredRecord := Pred {
 
 Global Parameter pred_map : gmap pred_name PredRecord.
 (* Axiom pred_map_set : dom pred_map = pred_set. *)
+
+Inductive StackFree : assertion → Prop :=
+| SF_Proc proc_name proc_entry :
+    StackFree (LProc proc_name proc_entry)
+| SF_Expr p :
+    StackFree (LExprA p)
+| SF_Pure p :
+    StackFree (LPure p)
+| SF_Own e fld chunk :
+    StackFree (LOwn e fld chunk)
+| SF_GhostOwn e fld RAPAck chunk :
+    StackFree (LGhostOwn e fld RAPAck chunk)
+| SF_Forall v body :
+    StackFree body →
+    StackFree (LForall v body)
+| SF_Exists v body :
+    StackFree body →
+    StackFree (LExists v body)
+| SF_Impl cond body :
+    StackFree body →
+    StackFree (LImpl cond body)
+| SF_And a1 a2 :
+    StackFree a1 →
+    StackFree a2 →
+    StackFree (LAnd a1 a2)
+| SF_Inv inv_name args inv_record :
+    inv_map !! inv_name = Some inv_record →
+    StackFree (subst (inv_record.(inv_body)) (list_to_map (zip inv_record.(inv_args) args))) →
+    StackFree (LInv inv_name args)
+| SF_Pred pred_name args pred_record :
+    pred_map !! pred_name = Some pred_record →
+    StackFree (subst (pred_record.(pred_body)) (list_to_map (zip pred_record.(pred_args) args))) →
+    StackFree (LPred pred_name args).
+
+
+(* Fixpoint StackFreeStr (F : assertion -d> bool) (a: assertion) : bool :=
+match a with
+| LProc proc_name proc_entry => true
+| LStack σ => false
+| LExprA p => true
+| LPure p => true
+| LOwn e fld chunk => true
+| LGhostOwn e fld RAPAck chunk => true
+| LForall v body => StackFreeStr F body
+| LExists v body => StackFreeStr F body
+| LImpl cond body => StackFreeStr F body
+| LInv inv' args => 
+    (* true *)
+    match inv_map !! inv' with
+    | Some inv_record => 
+      let subst_map := list_to_map (zip inv_record.(inv_args) args) in
+      F (subst inv_record.(inv_body) subst_map)
+    | None => true
+    end
+
+| LPred pred args => 
+    (* true *)
+    match pred_map !! pred with 
+    | Some pred_record =>
+      let subst_map := list_to_map (zip pred_record.(pred_args) args) in
+
+      F (subst pred_record.(pred_body) subst_map)
+    | None => true
+    end
+| LAnd a1 a2 => (StackFreeStr F a1) && (StackFreeStr F a2)
+end.
+
+Definition StackFreePre (F : assertion -d> bool) :
+     assertion -d> bool := λ a , StackFreeStr F a.
+
+Global Instance StackFreePre_contractive : Contractive StackFreePre.
+Proof. rewrite /StackFreePre.  intros n F1 F2 Hd a. 
+  revert a.
+  induction a; simpl; try auto.
+  - destruct (inv_map !! inv_name0); try reflexivity.
+    auto. f_equal.
+
+  solve_contractive. repeat (f_contractive || f_equiv). solve_contractive.
+
+
+Definition StackFree := fixpoint StackFreePre. *)
+
+Global Parameter proc_map : gmap proc_name ProcRecord.
+(* Axiom proc_map_set : dom proc_map = proc_set. *)
+Axiom proc_args_unique : map_Forall (λ proc proc_entry, NoDup (proc_args_of proc_entry).*1 ) proc_map.
+
+Axiom proc_spec_stack_free : 
+  map_Forall (λ proc proc_entry, StackFree (proc_precond_of proc_entry) /\ StackFree (proc_postcond_of proc_entry) ) proc_map.
+
 
 Inductive expr_well_defined : lang.expr -> Prop :=
 | Constr e :
@@ -457,8 +537,11 @@ Inductive stmt_well_defined : pvar_typs -> stmt -> Prop :=
 Lemma alloc_stmt_well_defined ρ x fld val fld_vals : 
   stmt_well_defined ρ (Alloc x ((fld, val) :: fld_vals)) -> stmt_well_defined ρ (Alloc x fld_vals).
 Proof.
-  Admitted.
-
+  intros H.
+  inversion H.
+  apply (AllocTp ρ x fld_vals).
+  inversion H2. exact H7.
+Qed.
 
 Section AtomicAnnotations.
   Parameter inv_namespace_map : inv_name -> namespace.
@@ -491,10 +574,10 @@ Section Translation.
     Lemma trnsl_lval_injective v1 v2 : trnsl_lval v1 = trnsl_lval v2 -> v1 = v2.
     Proof.
       destruct v1 eqn:Hv1, v2 eqn:Hv2; try discriminate.
-      - simpl. intros. inversion H. done.
-      - simpl. intros. inversion H. done.
-      - simpl. intros. inversion H. done.
-      - simpl. intros. inversion H. destruct l, l0. simpl in H1. subst loc_car0. done.
+      - simpl; intros; inversion H. done.
+      - simpl; intros; inversion H. done.
+      - simpl; intros; inversion H. done.
+      - simpl; intros. inversion H. destruct l, l0. simpl in H1; subst loc_car0. done.
     Qed. 
 
     Lemma trnsl_lval_trnsl_val_inverse y: trnsl_lval (trnsl_val y) = y.
@@ -604,7 +687,7 @@ Section Translation.
 
   | IfS e s1 s2 => 
       match (trnsl_stmt s1), (trnsl_stmt s2) with
-      | None', None' => None'
+      | None', None' => Some' lang.SkipS
       | Some' s1, None' => Some' (lang.IfS e s1 lang.SkipS)
       | None', Some' s2 => Some' (lang.IfS e lang.SkipS s2 )
       | Some' s1, Some' s2 => Some' (lang.IfS e s1 s2) 
@@ -620,7 +703,7 @@ Section Translation.
   | FldRd v e1 fld => Some' (lang.FldRd v e1 fld)
   | CAS v e1 fld e2 e3 => Some' (lang.CAS v e1 fld e2 e3)
   | Alloc v fs => Some' (lang.Alloc v fs)
-  | Spawn proc args => None'
+  | Spawn proc args => Some' (lang.Spawn proc args)
   
   | UnfoldPred pred args => None'
   | FoldPred pred args => None'
@@ -631,10 +714,314 @@ Section Translation.
   | Fpu e fld RAPack old_val new_val => None'
   end.
 
+  Ltac proj_fst H := (apply f_equal with (f := fst) in H).
+
+  (* Monotonicity for Some' *)
+  Lemma trnsl_atomic_step_monotone (s : stmt)  :
+    (forall stmt1 stmt2 stp1 stp2, 
+        trnsl_atomic_block s true = (stmt1, stp1) ->
+        trnsl_atomic_block s false = (stmt2, stp2) ->
+        not (stmt1 = Error) ->
+        stmt1 = stmt2 /\ (stp2 -> stp1)).
+  Proof.
+    induction s.
+    all: intros.
+
+    1: { (* Seq *)
+      simpl in H, H0.
+
+      destruct (trnsl_atomic_block s1 true) eqn:E1;
+      destruct (trnsl_atomic_block s1 false) eqn:E2.
+      specialize (IHs1 t t0 b b0 eq_refl eq_refl).
+
+      destruct t eqn:Ht, t0 eqn:Ht0.
+        all:
+          try (specialize (IHs1 ltac:(intros Htemp'; discriminate)) as [IHs1stmt IHs1stp]; try done).
+        all:
+          try (inversion H; subst; contradiction).
+
+      - destruct b, b0.
+        ** rewrite H  in H0. inversion H0; subst. done.
+        ** specialize (IHs2 stmt1 stmt2 stp1 stp2 H H0 H1) as IHs2Sp. done.
+        ** exfalso. apply IHs1stp. done.
+        ** rewrite H in H0. inversion H0; subst. done.
+
+      - destruct b, b0; inversion IHs1stmt; subst.
+        ** rewrite H in H0. inversion H0. done.
+        ** destruct (trnsl_atomic_block s2 true) eqn:Htrnsl_s2;
+          destruct (trnsl_atomic_block s2 false) eqn:Htrnsl_s2'.
+
+          specialize (IHs2 t t0 b b0 eq_refl eq_refl).
+          
+          destruct t eqn:Ht, t0 eqn:Ht0. 
+          all: 
+            inversion H; inversion H0; subst; 
+            try (specialize (IHs2 ltac:(intros Htemp; discriminate)) as [IHs2Stmt IHs2stp]; split; try done); 
+            try done.
+          
+          inversion IHs2Stmt; subst. done.
+
+        ** exfalso. apply IHs1stp; done.
+        ** destruct (trnsl_atomic_block s2 false) eqn:Htrnsl_s2.
+          destruct (trnsl_atomic_block s2 true) eqn:Htrnsl_s2'.
+
+          specialize (IHs2 t0 t b0 b eq_refl eq_refl).
+
+          destruct t0 eqn:Ht0, t eqn:Ht. 
+          all: 
+            inversion H; inversion H0; subst; 
+            try (specialize (IHs2 ltac:(intros [Htemp Htemp']; discriminate)) as [IHs2Stmt IHs2stp]; split; try done); 
+            try done.
+    }
+
+    1: { (* IfS *)
+      simpl in H, H0.
+
+        destruct (trnsl_atomic_block s1 true) eqn: E1.
+        destruct (trnsl_atomic_block s1 false) eqn:E2.
+
+        specialize (IHs1 t t0 b b0 eq_refl eq_refl).
+
+        destruct t eqn:Ht, t0 eqn:Ht0.
+        all:
+          try (specialize (IHs1 ltac:(intros Htemp'; discriminate)) as [IHs1stmt IHs1stp]; try done).
+        
+        all:
+          (destruct (trnsl_atomic_block s2 true) eqn:F1;
+          destruct (trnsl_atomic_block s2 false) eqn:F2;
+          specialize (IHs2 t1 t2 b1 b2 eq_refl eq_refl);  
+          destruct t1 eqn:Ht1, t2 eqn:Ht2;
+          try (specialize (IHs2 ltac:(intros Htemp; discriminate)) as [IHs2stmt IHs2stp]; try done)
+          ).
+
+        all:
+            (inversion H; inversion H0; subst; split; try done).
+        + destruct b0, b; intuition.
+        + inversion IHs2stmt; subst; done.
+        + destruct b0, b2; intuition.
+        + inversion IHs1stmt; subst; done.
+        + destruct b0, b2; auto.
+        + inversion IHs1stmt; inversion IHs2stmt; subst; done.
+        + destruct b0, b2; auto.
+    }
+
+    all: simpl in *; inversion H; inversion H0; subst; try done.
+    
+    apply IHs; done.
+  Qed.
+
+  Definition P_some (c : stmt) :=
+    forall stmt' step_taken,
+      (trnsl_atomic_block c step_taken).1 = Some' stmt' ->
+      trnsl_stmt c = Some' stmt'.
+
+  Definition P_none (c : stmt) :=
+    forall step_taken,
+      (trnsl_atomic_block c step_taken).1 = None' ->
+      trnsl_stmt c = None'.
+
+  Lemma trnsl_stmt_trnsl_atomic_block_some_none_mutual :
+    forall c, (P_some c /\ P_none c).
+  Proof.
+    apply (stmt_ind (fun c => P_some c /\ P_none c)).
+    all: intros; simpl in *.
+
+    Ltac solve_split_case :=
+      split;
+      [ (* P_some *)
+        intros stmt' step_taken H;
+        simpl in H;
+        destruct step_taken; try discriminate H; rewrite <- H; try done
+      | (* P_none *)
+        intros step_taken H;
+        simpl in H;
+        destruct step_taken; try discriminate H; try done
+      ].
+
+    (* All atomic steps *)
+    all: try (solve_split_case).
+        
+    1: { (* Seq*)
+      destruct H as [IHsome1 IHnone1].
+      destruct H0 as [IHsome2 IHnone2].
+      split.
+      + (* --- P_some --- *)
+        intros stmt' step_taken H.
+        simpl in H.
+        destruct (trnsl_atomic_block s1 step_taken) as [[| | ] step1] eqn:H1;
+        simpl in H.
+        ++ (* case (None', step1) *)
+          unfold P_none in IHnone1. 
+          proj_fst H1.
+          specialize (IHnone1 step_taken H1) as Hs1.
+          simpl. 
+          rewrite Hs1.
+          unfold P_some in IHsome2. apply IHsome2 in H. rewrite H. done.
+
+        ++ discriminate H.
+        
+        ++ (* case (Some' s1', step1) *)
+          unfold P_some in IHsome1.
+          proj_fst H1.
+          specialize (IHsome1 s step_taken H1) as Hs1.
+          simpl. rewrite Hs1.
+          unfold P_some in IHsome2. 
+          destruct (trnsl_atomic_block s2 step1) as [[| | ] step2] eqn:H2.
+          ** proj_fst H2. 
+            specialize (IHnone2 step1 H2) as Hs2. rewrite Hs2. done.
+
+          ** discriminate H.
+
+          **  proj_fst H2. specialize (IHsome2 s0 step1 H2) as Hs2. rewrite Hs2.
+          simpl in H. rewrite H. done.
+
+      + (* --- P_none --- *)
+        intros step_taken H.
+        simpl in H.
+        destruct (trnsl_atomic_block s1 step_taken) as [[| | ] step1] eqn:H1;
+        simpl in H.
+        ++ (* case (None', step1) *)
+          unfold P_none in IHnone1.
+          proj_fst H1.
+          specialize (IHnone1 step_taken H1) as Hs1.
+          simpl. rewrite Hs1.
+          unfold P_none in IHnone2.
+          apply IHnone2 in H. rewrite H. done.
+
+        ++ (* case (Error, step1) *)
+          discriminate H.
+
+        ++ (* case (Some' s1', step1) *)
+          unfold P_some in IHsome1.
+          proj_fst H1.
+          specialize (IHsome1 s step_taken H1) as Hs1.
+          simpl. rewrite Hs1.
+          destruct (trnsl_atomic_block s2 step1) as [[| | ] step2] eqn:H2;
+          simpl in H.
+          ** (* (None', step2) *)
+              unfold P_none in IHnone2.
+              proj_fst H2.
+              specialize (IHnone2 step1 H2) as Hs2.
+              rewrite Hs2. done.
+          ** discriminate H.
+          ** discriminate H.
+    }
+      
+    1: { (* IfS *)
+      destruct H as [IHsome1 IHnone1].
+      destruct H0 as [IHsome2 IHnone2].
+      split.
+
+      + (* --- P_some --- *)
+        intros stmt' step_taken H.
+        simpl in H.
+        destruct (trnsl_atomic_block s1 step_taken) as [[| | ] step1] eqn:H1;
+        destruct (trnsl_atomic_block s2 step_taken) as [[| | ] step2] eqn:H2;
+        simpl in H.
+
+        ++ (* case: s1 = None', s2 = None' *)
+          unfold P_none in IHnone1. proj_fst H1. specialize (IHnone1 step_taken H1) as Hs1.
+          simpl. rewrite Hs1.
+          unfold P_none in IHnone2. proj_fst H2. specialize (IHnone2 step_taken H2) as Hs2.
+          rewrite Hs2. simpl.
+          rewrite H. reflexivity.
+
+        ++ (* case: s1 = None', s2 = Error *) 
+          discriminate H.
+        
+        ++ (* case: s1 = None', s2 = Some' s2' *)
+          unfold P_none in IHnone1. proj_fst H1. specialize (IHnone1 step_taken H1) as Hs1.
+          simpl. rewrite Hs1.
+          unfold P_some in IHsome2. proj_fst H2. specialize (IHsome2 s step_taken H2) as Hs2.
+          rewrite Hs2. simpl. rewrite H. reflexivity.
+
+        ++ (* case: s1 = Error, s2 = None' *)
+          discriminate H.
+
+        ++ (* case: s1 = Error, s2 = Error *)
+          discriminate H.
+        
+        ++ (* case: s1 = Error, s2 = Some' s *)
+          discriminate H.
+
+        ++ (* case: s1 = Some' s1', s2 = None' *)
+          unfold P_some in IHsome1. proj_fst H1. specialize (IHsome1 s step_taken H1) as Hs1.
+          simpl. rewrite Hs1.
+          unfold P_none in IHnone2. proj_fst H2. specialize (IHnone2 step_taken H2) as Hs2.
+          rewrite Hs2. simpl. rewrite H. reflexivity.
+
+        ++ (* case: s1 = Some' s1', s2 = Error *)
+          discriminate H.
+
+        ++ (* case: s1 = Some' s, s2 = Some' s0 *)
+          unfold P_some in IHsome1. proj_fst H1. specialize (IHsome1 s step_taken H1) as Hs1.
+          simpl. rewrite Hs1.
+          unfold P_some in IHsome2. proj_fst H2. specialize (IHsome2 s0 step_taken H2) as Hs2.
+          rewrite Hs2. simpl. rewrite H. reflexivity.
+
+      + (* --- P_none --- *)
+        intros step_taken H.
+        simpl in H.
+        destruct (trnsl_atomic_block s1 step_taken) as [[| | ] step1] eqn:H1;
+        destruct (trnsl_atomic_block s2 step_taken) as [[| | ] step2] eqn:H2;
+        simpl in H; try discriminate H.
+    }
+
+    1: { (* InvAccessBlock *)
+      split.
+      + (* P_some *)
+        intros stmt' step_taken H1.
+        simpl.
+        simpl in H1.
+        destruct step_taken; try discriminate H.
+        * rewrite <- H1. simpl.
+          destruct (trnsl_atomic_block body true) eqn:Hb1.
+          destruct (trnsl_atomic_block body false) eqn:Hb2.
+          simpl in H1.
+
+          pose proof (trnsl_atomic_step_monotone body t t0 b b0 Hb1 Hb2) as HMono.
+          specialize (HMono ltac:(intros Htemp; rewrite H1 in Htemp; discriminate)) as [Hbody _]. simpl. done.
+        * rewrite <- H1. simpl. done.
+
+      + (* P_none *) 
+        intros step_taken H1.
+        simpl in H1.
+        simpl.
+        destruct H as [HIndSome HIndNone].
+        unfold P_none in HIndNone.
+        destruct step_taken; rewrite <- H1; simpl; try done.
+        * 
+          destruct (trnsl_atomic_block body true) eqn:Hb1.
+          destruct (trnsl_atomic_block body false) eqn:Hb2.
+          simpl in H1.
+
+          pose proof (trnsl_atomic_step_monotone body t t0 b b0 Hb1 Hb2) as HMono.
+          specialize (HMono ltac:(intros Htemp; rewrite H1 in Htemp; discriminate)) as [Hbody _]. simpl. done.
+    }
+  Qed.
+
+  Lemma trnsl_stmt_trnsl_atomic_block_some c stmt :
+    (trnsl_atomic_block c false).1 = Some' stmt -> trnsl_stmt c = Some' stmt.
+  Proof.
+    pose proof (trnsl_stmt_trnsl_atomic_block_some_none_mutual c) as [Hsome _].
+    unfold P_some in Hsome.
+    specialize (Hsome stmt false). done.
+  Qed.
+
+  Lemma trnsl_stmt_trnsl_atomic_block_none c :
+    (trnsl_atomic_block c false).1 = None' -> trnsl_stmt c = None'.
+  Proof.
+    pose proof (trnsl_stmt_trnsl_atomic_block_some_none_mutual c) as [_ Hnone].
+    unfold P_none in Hnone.
+    specialize (Hnone false). done.
+  Qed.
+
   Lemma trnsl_atomic_block_atomicity stmt s stk_id:
     (trnsl_atomic_block stmt false).1 = Some' s -> Atomic WeaklyAtomic (to_rtstmt stk_id s).
   Proof.
-    Admitted.
+    unfold Atomic. simpl.
+    
+  Admitted.
  
 
   Definition transport {A B : Type} (H : A = B) (x : A) : B :=
@@ -749,21 +1136,6 @@ Qed.
     apply eq_rect_transport_valid_inv. done.
   Qed.
 
-  Lemma trnsl_stmt_trnsl_atomic_block_some c stmt :
-    (trnsl_atomic_block c false).1 = Some' stmt -> trnsl_stmt c = Some' stmt.
-  Proof.
-    Admitted.
-
-  Lemma trnsl_stmt_trnsl_atomic_block_none c :
-    (trnsl_atomic_block c false).1 = None' -> trnsl_stmt c = None'.
-  Proof.
-    Admitted.
-
-  Global Parameter trnsl_pred : pred_name -> list LExpr -> symb_map -> iProp Σ.
-  Global Parameter trnsl_inv : inv_name -> list LExpr -> symb_map -> iProp Σ.
-
-  Definition Ωp_type := pred_name -> list LExpr -> symb_map -> iProp Σ.
-  Definition Ωi_type := inv_name -> list LExpr -> symb_map -> iProp Σ.
 
   Global Parameter Γ : Γ_type.
 
@@ -1381,11 +1753,91 @@ Section AssertionsProperties.
   Proof. 
     Admitted.
 
+
+
+  Definition stack_free_prop (F : assertion -d> stack_id -d> symb_map -d> iPropO Σ) :=
+  ∀ a stk stk' mp,
+    StackFree a →
+    trnsl_assertion_str F a stk mp = trnsl_assertion_str F a stk' mp.
+
+  Lemma stack_free_prop_closed :
+  ∀ F, stack_free_prop F → stack_free_prop (trnsl_assertion_pre F).
+  Proof.
+    intros F IH a.
+    (* unfold trnsl_assertion_pre. *)
+    (* simpl. *)
+    induction a; intros stk stk' mp Hsf; simpl in *; try reflexivity; try done.
+      (* try (destruct (StackFree a1 && StackFree a2) eqn:Hsf2; simpl in *; ...). *)
+    - inversion Hsf.
+    - (* LForall*) apply f_equal.   (* LInv *)
+      inversion Hsf.
+      rewrite (IHa stk stk' mp H0). done.
+    - (* LExists *) apply f_equal. extensionality v'.
+    inversion Hsf.
+      rewrite (IHa stk stk' (λ x : lvar, if (x =? v)%string then v' else mp x) H0). done.
+      
+    - inversion Hsf. (* LImpl *) rewrite (IHa stk stk' mp H0). done.
+    - (* LInv *) 
+      destruct (inv_map !! inv_name0) as [inv_record|] eqn:Hinv; simpl; [|reflexivity].
+      unfold trnsl_assertion_pre.
+
+      rewrite (IH (subst inv_record.(inv_body) _ ) stk stk' mp); auto.
+      inversion Hsf. rewrite Hinv in H1. inversion H1. subst inv_record0. exact H2.
+
+    - (* LPred *)
+      rewrite /trnsl_assertion_str.
+      destruct (pred_map !! pred_name0) as [pred_record|] eqn:Hpred; simpl; [|reflexivity].
+      unfold trnsl_assertion_pre.
+      rewrite (IH (subst pred_record.(pred_body) _) stk stk' mp); auto.
+      inversion Hsf. rewrite Hpred in H1. inversion H1. subst pred_record0. exact H2.
+
+    - (* LAnd *)    
+      inversion Hsf; subst a0 a3.
+      rewrite (IHa1 stk stk' mp H1) (IHa2 stk stk' mp H2). reflexivity.
+  Qed.
+
+(* instantiate with the fixed point *)
+(* Lemma stack_free_assertion_trnsl a stk stk' mp :
+  StackFree a ->
+  trnsl_assertion a stk mp = trnsl_assertion a stk' mp.
+Proof.
+Admitted. *)
+  (* intros HSF.
+  unfold trnsl_assertion.
+   (* trnsl_assertion'. *)
+  rewrite trnsl_assertion_unfold.
+  (* Induction on the StackFree derivation *)
+  induction HSF.
+
+  - rewrite fixpoint_unfold. (* Case for each constructor of StackFree *)
+    
+    (* Try to simplify the fixpoint directly without unfolding *)
+    (* The idea is that for stack-free assertions, the computation
+       doesn't depend on the stack parameter *)
+    
+    (* You may need to use functional extensionality or 
+       properties specific to how trnsl_assertion_str is defined *)
+Admitted. *)
+
+
   Lemma stack_free_assertion_trnsl assertion stk_id stk_id' mp : 
     StackFree assertion -> 
     trnsl_assertion assertion stk_id mp = trnsl_assertion assertion stk_id' mp.
   Proof.
-    Admitted.
+  Admitted.
+    (* revert assertion.
+    induction assertion0.
+    - intros. unfold trnsl_assertion. unfold trnsl_assertion'.
+    (* rewrite /trnsl_assertion_pre. *)
+    rewrite (leibniz_equiv (fixpoint trnsl_assertion_pre (LProc proc_name0 proc_entry) stk_id mp) (fixpoint trnsl_assertion_pre (LProc proc_name0 proc_entry) stk_id' mp)).
+    rewrite (fixpoint_unfold (trnsl_assertion_str : _ -> _ -> _ -> iPropO Σ)).
+
+    rewrite (fixpoint_unfold trnsl_assertion_pre).
+
+    rewrite fixpoint_unfold.
+ rewrite trnsl_assertion_unfold.
+    simpl. done.
+  Admitted. *)
 
 
   Lemma stack_free_assertion_subst assertion subst_map :
