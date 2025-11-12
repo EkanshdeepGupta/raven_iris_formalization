@@ -640,7 +640,7 @@ Section Translation.
 
   | IfS e s1 s2, _ =>
     match trnsl_atomic_block s1 step_taken, trnsl_atomic_block s2 step_taken with
-    | (None', step_taken'), (None', step_taken'') => (Some' (lang.SkipS), step_taken' || step_taken'')
+    | (None', step_taken'), (None', step_taken'') => (None', step_taken' || step_taken'')
     | (None', step_taken'), (Some' s2, step_taken'') => (Some' (lang.IfS e lang.SkipS s2), step_taken' || step_taken'')
     | (Some' s1, step_taken'), (None', step_taken'') => (Some' (lang.IfS e s1 lang.SkipS), step_taken' || step_taken'')
     | (Some' s1, step_taken'), (Some' s2, step_taken'') => (Some' (lang.IfS e s1 s2), step_taken' || step_taken'')
@@ -650,10 +650,12 @@ Section Translation.
   | Assign v e, false => (Some' (lang.Assign v e), true)
   | Assign v e, true => (Error, true)
 
-  | SkipS, false => (Some' lang.SkipS, false)
-  | SkipS, true => (Some' lang.SkipS, true)
+  | SkipS, false => (Some' lang.SkipS, true)
+  | SkipS, true => (Error, true)
 
-  | StuckS, _ => (Some' lang.StuckS, step_taken)
+  | StuckS, false => (Some' lang.StuckS, true)
+  | StuckS, true => (Error, true)
+
   | Call v proc args, _ => (Error, true)
 
   | FldWr v fld e2, false => (Some' (lang.FldWr v fld e2), true)
@@ -687,7 +689,7 @@ Section Translation.
 
   | IfS e s1 s2 => 
       match (trnsl_stmt s1), (trnsl_stmt s2) with
-      | None', None' => Some' lang.SkipS
+      | None', None' => None'
       | Some' s1, None' => Some' (lang.IfS e s1 lang.SkipS)
       | None', Some' s2 => Some' (lang.IfS e lang.SkipS s2 )
       | Some' s1, Some' s2 => Some' (lang.IfS e s1 s2) 
@@ -715,6 +717,7 @@ Section Translation.
   end.
 
   Ltac proj_fst H := (apply f_equal with (f := fst) in H).
+  Ltac proj_snd H := (apply f_equal with (f := snd) in H).
 
   (* Monotonicity for Some' *)
   Lemma trnsl_atomic_step_monotone (s : stmt)  :
@@ -964,7 +967,13 @@ Section Translation.
         simpl in H.
         destruct (trnsl_atomic_block s1 step_taken) as [[| | ] step1] eqn:H1;
         destruct (trnsl_atomic_block s2 step_taken) as [[| | ] step2] eqn:H2;
-        simpl in H; try discriminate H.
+        simpl in H; try discriminate H. simpl.
+        unfold P_none in IHnone1. unfold P_none in IHnone2.
+        proj_fst H1. proj_fst H2.
+
+        specialize (IHnone1 step_taken H1).
+        specialize (IHnone2 step_taken H2).
+        rewrite IHnone1. rewrite IHnone2. done.
     }
 
     1: { (* InvAccessBlock *)
@@ -1016,13 +1025,278 @@ Section Translation.
     specialize (Hnone false). done.
   Qed.
 
+  Lemma trnsl_atomic_block_true_conserved stmt:
+    (trnsl_atomic_block stmt true).2 = true.
+  Proof.
+    induction stmt. 
+
+    all: simpl in *; try done.
+    - simpl. destruct (trnsl_atomic_block stmt1 true) eqn:Hstmt1.
+      destruct t; try done.
+      + simpl in *. subst. done.
+      + simpl in *; subst.
+        destruct (trnsl_atomic_block stmt2 true) eqn:Hstmt2.
+        simpl in *; subst.
+        destruct t; simpl; done.
+    
+    - simpl in *. destruct (trnsl_atomic_block stmt1 true) eqn:Hstmt1.
+      destruct t; try done.
+      + simpl in *; subst.
+        destruct (trnsl_atomic_block stmt2 true) eqn:Hstmt2.
+        simpl in *; subst. destruct t; done.
+      
+      + simpl in *; subst.
+        destruct (trnsl_atomic_block stmt2 true) eqn:Hstmt2.
+        simpl in *; subst. destruct t; done.
+
+  Qed.
+
+  Lemma trnsl_atomic_block_true_conserved' stmt t b:
+    trnsl_atomic_block stmt true = (t, b) -> b = true.
+  Proof.
+    intros.
+    proj_snd H.
+    pose proof (trnsl_atomic_block_true_conserved stmt). rewrite H in H0. simpl in *. done.
+  Qed.
+
+  Lemma trnsl_atomic_block_non_constant_step b stmt output:
+    trnsl_atomic_block stmt b = (output, b) -> (output = None' \/ output = Error).
+  Proof.
+    revert b output.
+    induction stmt; intros.
+
+    all: 
+      try (simpl in *;
+      destruct b; inversion H; [subst; right; done]).
+    - simpl in *.
+      destruct (trnsl_atomic_block stmt1 b) eqn:Hstmt1.
+      destruct (trnsl_atomic_block stmt2 b) eqn:Hstmt2.
+      destruct b0.
+      + destruct t.
+        ++ pose proof (trnsl_atomic_block_true_conserved stmt2).
+          destruct b.
+          * specialize (IHstmt2 true output H). done.
+          * proj_snd H. rewrite H in H0. discriminate.
+
+        ++ right. proj_fst H. simpl in *. subst. done.
+
+        ++ destruct (trnsl_atomic_block stmt2 true) eqn:Hstmt2'.
+          pose proof (trnsl_atomic_block_true_conserved stmt2).
+          destruct b0; destruct b.
+          * specialize (IHstmt1 true (Some' s) Hstmt1). destruct IHstmt1; discriminate.
+          * destruct t; discriminate.
+          * proj_snd Hstmt2'. rewrite Hstmt2' in H0. discriminate.
+          * proj_snd Hstmt2'. rewrite Hstmt2' in H0. discriminate.
+      + destruct t.
+        ++ destruct b.
+          * pose proof (trnsl_atomic_block_true_conserved' stmt1 None' false Hstmt1); discriminate.
+          * specialize (IHstmt2 false output H). done.
+
+        ++ inversion H; subst. right; done.
+
+        ++ destruct b.
+          * pose proof (trnsl_atomic_block_true_conserved' stmt1 (Some' s) false Hstmt1); discriminate.
+          * specialize (IHstmt1 false (Some' s) Hstmt1). destruct IHstmt1; discriminate.
+
+    - destruct (trnsl_atomic_block stmt1 b) eqn:Hstmt1.
+      destruct (trnsl_atomic_block stmt2 b) eqn:Hstmt2.
+      destruct b.
+      + simpl in H. rewrite Hstmt1 Hstmt2 in H.
+        pose proof (trnsl_atomic_block_true_conserved' stmt1 t b0 Hstmt1); subst.
+        pose proof (trnsl_atomic_block_true_conserved' stmt2 t0 b1 Hstmt2); subst.
+        specialize (IHstmt1 true t Hstmt1). specialize (IHstmt2 true t0 Hstmt2).
+        destruct IHstmt1, IHstmt2; subst; inversion H; subst; try (left; done); try (right; done).
+      
+      + destruct b0, b1.
+        ++ simpl in H; rewrite Hstmt1 Hstmt2 in H.
+          destruct t, t0; try discriminate; inversion H; subst.
+          all: try (left; done); try (right; done).
+
+        ++ simpl in H; rewrite Hstmt1 Hstmt2 in H.
+          destruct t, t0; try discriminate; inversion H; subst.
+          all: try (left; done); try (right; done).
+
+        ++ simpl in H; rewrite Hstmt1 Hstmt2 in H.
+          destruct t, t0; try discriminate; inversion H; subst.
+          all: try (left; done); try (right; done).
+        
+        ++ simpl in H; rewrite Hstmt1 Hstmt2 in H.
+          destruct t, t0; try discriminate; inversion H; subst.
+          all: try (left; done); try (right; done).
+          * specialize (IHstmt2 false (Some' s) Hstmt2). destruct IHstmt2; discriminate.
+          * specialize (IHstmt1 false (Some' s) Hstmt1). destruct IHstmt1; discriminate.
+          * specialize (IHstmt1 false (Some' s) Hstmt1). destruct IHstmt1; discriminate.
+
+    - simpl in *.
+      destruct b; inversion H; left; done.
+
+    -  simpl in *.
+      destruct b; inversion H; left; done.
+
+    - simpl in *. apply (IHstmt b). apply H.
+
+    - simpl in *.
+      destruct b; inversion H; left; done.
+  Qed.
+
   Lemma trnsl_atomic_block_atomicity stmt s stk_id:
     (trnsl_atomic_block stmt false).1 = Some' s -> Atomic WeaklyAtomic (to_rtstmt stk_id s).
   Proof.
-    unfold Atomic. simpl.
-    
-  Admitted.
- 
+    revert s.
+    induction stmt.
+    1: {
+      intros. simpl in *.
+      destruct (trnsl_atomic_block stmt1 false) eqn:Hstmt1.
+      destruct (trnsl_atomic_block stmt2 b) eqn:Hstmt2.
+      destruct b.
+      - pose proof (trnsl_atomic_block_true_conserved' stmt2 t0 b0 Hstmt2); subst.
+        pose proof (trnsl_atomic_block_non_constant_step true stmt2 t0 Hstmt2).
+        destruct H0; subst.
+        + destruct t; try discriminate. simpl in *. apply IHstmt1. apply H.
+        + destruct t; discriminate.
+
+      - pose proof (trnsl_atomic_block_non_constant_step false stmt1 t Hstmt1).
+        destruct H0; subst.
+        + simpl in *; subst. proj_fst Hstmt2. apply IHstmt2. apply Hstmt2.
+        + simpl in *; discriminate.
+     }
+
+    1: {
+      intros. simpl in *. 
+      destruct (trnsl_atomic_block stmt1 false) eqn:Hstmt1;
+      destruct (trnsl_atomic_block stmt2 false) eqn:Hstmt2.
+
+      destruct t eqn:Ht, t0 eqn:Ht0; simpl in *; try discriminate.
+      - inversion H; subst. simpl in *.
+        specialize (IHstmt2 s0 eq_refl).
+        unfold Atomic. intros.
+        inversion H0; simpl in *.
+        pose proof (fill_if_empty K e1' _ _ _ _ H1) as HK; subst. simpl in *. symmetry in H1. subst.
+        inversion H3; subst.
+        + destruct H13 as [e1' [e2'0 [K [Hs1 [Hs2 Hrtm]]]]].
+          pose proof (fill_atomic_empty K e1' (RTSkipS stk_id) ltac:(simpl; done) Hs1); subst. simpl in *. symmetry in Hs1; subst.
+          inversion Hrtm; subst. apply val_irreducible. done.
+
+        + unfold Atomic in IHstmt2.
+          specialize (IHstmt2 σ e2' [] σ' efs).
+          destruct H13 as [e1' [e2'0 [K [Hs1 [Hs2 Hrtm]]]]].
+          assert (prim_step (to_rtstmt stk_id s0) σ [] e2' σ' efs).
+          { apply (Ectx_step K e1' e2'0); try done.  }
+          specialize (IHstmt2 H1). done.
+
+        + destruct b1 eqn:Hb1, (to_rtstmt stk_id s0) eqn:Hs0; try (exfalso; done).
+          apply val_irreducible; done.
+
+      - inversion H; subst. simpl in *.
+        specialize (IHstmt1 s0 eq_refl).
+        unfold Atomic. intros.
+        inversion H0; simpl in *.
+        pose proof (fill_if_empty K e1' _ _ _ _ H1) as HK; subst. simpl in *. symmetry in H1; subst.
+        inversion H3; subst.
+        + unfold Atomic in IHstmt1.
+          specialize (IHstmt1 σ e2' [] σ' efs).
+          destruct H13 as [e1' [e2'0 [K [Hs1 [Hs2 Hrtm]]]]].
+          assert (prim_step (to_rtstmt stk_id s0) σ [] e2' σ' efs).
+          { apply (Ectx_step K e1' e2'0); try done.  }
+          specialize (IHstmt1 H1). done.
+
+        + destruct H13 as [e1' [e2'0 [K [Hs1 [Hs2 Hrtm]]]]].
+          pose proof (fill_atomic_empty K e1' (RTSkipS stk_id) ltac:(simpl; done) Hs1); subst. simpl in *. symmetry in Hs1; subst.
+          inversion Hrtm; subst. apply val_irreducible. done.
+
+        + destruct b1 eqn:Hb1, (to_rtstmt stk_id s0) eqn:Hs0; try (exfalso; done).
+          apply val_irreducible; done.
+
+      - inversion H; subst. simpl in *.
+        specialize (IHstmt1 s0 eq_refl).
+        specialize (IHstmt2 s1 eq_refl).
+        unfold Atomic. intros.
+        inversion H0; simpl in *.
+        pose proof (fill_if_empty K e1' _ _ _ _ H1) as HK; subst. simpl in *. symmetry in H1; subst.
+        inversion H3; subst.
+        + unfold Atomic in IHstmt1.
+          specialize (IHstmt1 σ e2' [] σ' efs).
+          destruct H13 as [e1' [e2'0 [K [Hs1 [Hs2 Hrtm]]]]].
+          assert (prim_step (to_rtstmt stk_id s0) σ [] e2' σ' efs).
+          { apply (Ectx_step K e1' e2'0); try done.  }
+          specialize (IHstmt1 H1). done.
+          
+        + unfold Atomic in IHstmt2.
+          specialize (IHstmt2 σ e2' [] σ' efs).
+          destruct H13 as [e1' [e2'0 [K [Hs1 [Hs2 Hrtm]]]]].
+          assert (prim_step (to_rtstmt stk_id s1) σ [] e2' σ' efs).
+          { apply (Ectx_step K e1' e2'0); try done.  }
+          specialize (IHstmt2 H1). done.
+
+        + destruct b1 eqn:Hb1.
+          * destruct (to_rtstmt stk_id s0) eqn:Hs0; try (exfalso; done).
+            apply val_irreducible; done.
+            
+          * destruct (to_rtstmt stk_id s1) eqn:Hs1; try (exfalso; done).
+            apply val_irreducible; done.
+
+    }
+
+    1: { 
+      intros. simpl in *. inversion H; subst. simpl in *.
+      apply atomic_assign.
+    }
+
+    1: { 
+      intros. simpl in *. inversion H; subst. simpl in *.
+      apply atomic_skip.
+    }
+
+    1: { 
+      intros. simpl in *. inversion H; subst. simpl in *.
+      apply atomic_stuck.
+    }
+
+    1: { 
+      intros. simpl in *. inversion H; subst.
+    }
+
+    1: { 
+      intros. simpl in *. inversion H; subst. simpl in *.
+      apply atomic_fld_wr.
+    }
+
+    1: { 
+      intros. simpl in *. inversion H; subst. simpl in *.
+      apply atomic_fld_rd.
+    }
+
+    1: { 
+      intros. simpl in *. inversion H; subst. simpl in *.
+      apply atomic_cas.
+    }
+
+    1: { 
+      intros. simpl in *. inversion H; subst. simpl in *.
+      apply atomic_alloc.
+    }
+
+    1: { 
+      intros. simpl in *. inversion H; subst. simpl in *.
+      apply atomic_spawn.
+    }
+
+    1: { 
+      intros. simpl in *. inversion H; subst.
+    }
+
+    1: { 
+      intros. simpl in *. inversion H; subst.
+    }
+
+    1: { 
+      intros. simpl in *. apply IHstmt. apply H.
+    }
+
+    1: { 
+      intros. simpl in *. inversion H; subst.
+    }
+  Qed.
 
   Definition transport {A B : Type} (H : A = B) (x : A) : B :=
     eq_rect A id x _ H.

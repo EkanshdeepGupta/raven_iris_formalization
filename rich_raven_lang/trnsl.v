@@ -774,26 +774,12 @@ Section MainTranslation.
 
         - destruct b0.
 
-          + 
-          (* setoid_rewrite trnsl_assertion_unfold. *)
-          iIntros (Φ). iModIntro.
-          iIntros "[Hstk Hcr] Hpost'".
+          + setoid_rewrite trnsl_assertion_unfold. iIntros "[[Hstk Hu] Hcr]".
 
-          setoid_rewrite trnsl_assertion_unfold.
-          iPoseProof ("IH'" with "[%] [Hstk Hcr]") as "Hpost"; try iFrame; try done.
-          { simpl. iDestruct "Hstk" as "[Hstk Htrnsl]". iFrame. iPureIntro. unfold LExpr_holds. rewrite Hinterp_lexpr. done. }
+          iPoseProof ("IH'" with "[%] [Hstk Hu Hcr]") as "Hpost"; try iFrame; try done.
+          { unfold LExpr_holds. rewrite Hinterp_lexpr. done. }
 
           iDestruct "Hpost" as ">[[Hstk Hu0] Hcr2]".
-
-          iApply (wp_skip (trnsl_assertion (LAnd (LStack stk2) q) stk_id mp) with "[Hstk Hu0]").
-          { setoid_rewrite trnsl_assertion_unfold. simpl. iFrame.  }
-
-          iNext. iIntros "Hpost1".
-          iApply "Hpost'".
-
-          setoid_rewrite trnsl_assertion_unfold.
-
-          iDestruct "Hpost1" as "[[Hstk Hu] Hcr]".
 
           assert (ι2 = ι2 `min` ι3 + (ι2 - ι2 `min` ι3)) as Hiota. { lia.  }
           apply (f_equal lc) in Hiota.
@@ -801,29 +787,14 @@ Section MainTranslation.
 
           iDestruct (lc_split (ι2 `min` ι3) (ι2 - (ι2 `min` ι3)) with "Hcr2") as "[Hcr2 Hcr2']".
 
-          iFrame.
+          iFrame. iModIntro. done.
           
-          + 
-          (* setoid_rewrite trnsl_assertion_unfold. *)
-          iIntros (Φ). iModIntro.
-          iIntros "[Hstk Hcr] Hpost'".
+          + setoid_rewrite trnsl_assertion_unfold. iIntros "[[Hstk Hu] Hcr]".
 
-
-          
-          (* iIntros "[[Hstk Hu] Hcr]". *)
-          setoid_rewrite trnsl_assertion_unfold.
-          iPoseProof ("IH1'" with "[%] [Hstk Hcr]") as "Hpost"; try iFrame; try done.
-          { simpl. iDestruct "Hstk" as "[Hstk Htrnsl]". iFrame. iPureIntro. unfold LExpr_holds. simpl. rewrite Hinterp_lexpr. done.  }
+          iPoseProof ("IH1'" with "[%] [Hstk Hu Hcr]") as "Hpost"; try iFrame; try done.
+          { unfold LExpr_holds. simpl.  rewrite Hinterp_lexpr. done. }
 
           iDestruct "Hpost" as ">[[Hstk Hu0] Hcr2]".
-
-          iApply (wp_skip (trnsl_assertion (LAnd (LStack stk2) q) stk_id mp) with "[Hstk Hu0]").
-          { setoid_rewrite trnsl_assertion_unfold. simpl. iFrame.  }
-
-          iNext. 
-          setoid_rewrite trnsl_assertion_unfold.
-          iIntros "[[Hstk Hu] Hcr]".
-          iApply "Hpost'".
 
           assert (ι3 = ι2 `min` ι3 + (ι3 - ι2 `min` ι3)) as Hiota. { lia.  }
           apply (f_equal lc) in Hiota.
@@ -831,7 +802,7 @@ Section MainTranslation.
 
           iDestruct (lc_split (ι2 `min` ι3) (ι3 - (ι2 `min` ι3)) with "Hcr2") as "[Hcr2 Hcr2']".
           iFrame.
-
+          done.
         - iIntros (Φ). iModIntro. setoid_rewrite trnsl_assertion_unfold. iIntros "[[Hstk Hu] Hcr] HΦ".
           destruct b0.
           + iApply (wp_if_t e (RTSkipS stk_id) (to_rtstmt stk_id s) stk_id (symb_stk_to_stk_frm stk1 mp) ((trnsl_assertion p stk_id mp) ∗ £ι1) (stack_own[ stk_id, symb_stk_to_stk_frm stk2 mp] ∗ (trnsl_assertion q stk_id mp) ∗ £ι2) (lang.LitUnit) (inv_set_to_namespace mask) with "[IH'] [IH' Hstk Hu Hcr] [HΦ]"); try iFrame.

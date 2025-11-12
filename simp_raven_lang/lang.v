@@ -321,10 +321,34 @@ Inductive expr_step : expr → stack_frame → expr → Prop :=
     expr_step (IfE (Val v) e1 e2) stk_frame (e2).
 
 Inductive runtime_step : runtime_stmt → state → list Empty_set → runtime_stmt → state → list runtime_stmt → Prop :=
-| RTIfSStep σ stk_id stk_frm e s1 s2 b :
+| RTIfTStep σ stk_id stk_frm e s1 s2 s_next σ' efs:
+  σ.(stack) !! stk_id = Some stk_frm ->
+  expr_step e stk_frm (Val (LitBool true)) ->
+  (∃ e1' e2' K, s1 = foldl (flip fill_item) e1' K /\ s_next = foldl (flip fill_item) e2' K /\ runtime_step e1' σ [] e2' σ' efs)  ->
+  (* prim_step s1 σ [] s_next σ' ls -> *)
+  runtime_step (RTIfS e s1 s2 stk_id) σ [] s_next σ' efs
+
+| RTIfFStep σ stk_id stk_frm e s1 s2 s_next σ' efs:
+  σ.(stack) !! stk_id = Some stk_frm ->
+  expr_step e stk_frm (Val (LitBool false)) ->
+  (∃ e1' e2' K, s2 = foldl (flip fill_item) e1' K /\ s_next = foldl (flip fill_item) e2' K /\ runtime_step e1' σ [] e2' σ' efs)  ->
+  (* prim_step s2 σ [] s_next σ' ls -> *)
+  runtime_step (RTIfS e s1 s2 stk_id) σ [] s_next σ' efs
+
+| RTIfValStep σ stk_id stk_frm e s1 s2 b: 
   σ.(stack) !! stk_id = Some stk_frm ->
   expr_step e stk_frm (Val (LitBool b)) ->
+  (match b, s1, s2 with
+  | true, RTVal _, _ => True
+  | false, _, RTVal _ => True
+  | _, _, _ => False
+  end) ->
   runtime_step (RTIfS e s1 s2 stk_id) σ [] (if b then s1 else s2) σ []
+  
+(* | RTIfSStep σ stk_id stk_frm e s1 s2 b :
+  σ.(stack) !! stk_id = Some stk_frm ->
+  expr_step e stk_frm (Val (LitBool b)) ->
+  runtime_step (RTIfS e s1 s2 stk_id) σ [] (if b then s1 else s2) σ [] *)
 
 | RTAssignStep σ stk_id stk_frm var e v :
   σ.(stack) !! stk_id = Some stk_frm ->
@@ -472,3 +496,201 @@ Proof.
     + eapply IHargs; eauto.
 Qed.
 
+Lemma fill_not_if e1 e0 s e s1 s2 stk_id:
+  fill e1 (fill_item e0 s) <> (RTIfS e s1 s2 stk_id).
+Proof.
+    revert e0 s. 
+    induction e1.
+    - intros. destruct e0; try discriminate; try contradiction.
+    - simpl in *. intros. apply IHe1.
+Qed. 
+
+Lemma fill_if_empty K e1' e s1 s2 stk_id:
+  RTIfS e s1 s2 stk_id = fill K e1' -> K = [].
+Proof.
+  intros.
+  destruct K; try done.
+  simpl in *. 
+  pose proof (fill_not_if K e0 e1' e s1 s2 stk_id). symmetry in H. contradiction.
+Qed.
+
+Lemma fill_not_val e1 e0 s v1:
+    fill e1 (fill_item e0 s) <> (RTVal v1).
+  Proof.
+      revert e0 s. 
+      induction e1.
+      - intros. destruct e0; try discriminate; try contradiction.
+      - simpl in *. intros. apply IHe1.
+  Qed.
+
+Lemma fill_val_empty K e1' v:
+  RTVal v = fill K e1' -> K = [].
+Proof.
+  intros.
+  destruct K; try done.
+  simpl in *. 
+  pose proof (fill_not_val K e e1' v). symmetry in H. contradiction.
+Qed.
+
+Definition is_atomic_redex (r : runtime_stmt) : Prop :=
+  match r with
+  | RTAssign _ _ _ => True
+  | RTSkipS _ => True
+  | RTStuckS => True
+  | RTFldWr _ _ _ _ => True
+  | RTFldRd _ _ _ _ => True
+  | RTCAS _ _ _ _ _ _ => True
+  | RTAlloc _ _ _ => True
+  | RTSpawn _ _ _ => True
+  | _ => False
+  end.
+
+Lemma fill_not_atomic e1 e0 s r:
+  is_atomic_redex r ->
+  fill e1 (fill_item e0 s) <> r.
+Proof. 
+  revert e0 s. 
+  induction e1.
+  - intros. destruct e0; destruct r; simpl in *; try discriminate; try contradiction.
+  - simpl in *. intros. apply IHe1. apply H.
+Qed.
+
+Lemma fill_atomic_empty K e1 r:
+  is_atomic_redex r ->
+  r = fill K e1 -> K = [].
+Proof.
+  intros.
+  destruct K; try done.
+  simpl in *. 
+  pose proof (fill_not_atomic K e e1 r H). symmetry in H0. contradiction.
+Qed.
+
+
+Lemma atomic_assign x e stk_id :
+  Atomic WeaklyAtomic (RTAssign x e stk_id).
+Proof.
+  unfold Atomic. intros.
+  inversion H.
+
+  destruct K.
+  + simpl in *; subst. inversion H2. apply val_irreducible. simpl. done.
+  + simpl in *.
+    pose proof (fill_not_atomic K e0 e1' (RTAssign x e stk_id)).
+    simpl in H3.
+    specialize (H3 I).
+    symmetry in H0. contradiction.
+Qed.
+
+Lemma atomic_fld_wr v fld e stk_id : 
+  Atomic WeaklyAtomic (to_rtstmt stk_id (lang.FldWr v fld e)).
+Proof.
+  unfold Atomic. intros.
+  inversion H.
+
+  (* inversion H2; try discriminate. *)
+  destruct K eqn:HK.
+  + simpl in *. subst. inversion H2. apply val_irreducible. simpl. done.
+  + simpl in *.
+    pose proof (fill_not_atomic e1 e0 e1' (RTFldWr v fld e stk_id)); simpl in *.
+    specialize (H3 I).
+    symmetry in H0. contradiction.
+Qed.
+
+Lemma atomic_skip stk_id :
+  Atomic WeaklyAtomic (RTSkipS stk_id).
+Proof.
+  unfold Atomic. intros.
+  inversion H.
+
+  destruct K.
+  + simpl in *; subst. inversion H2. apply val_irreducible. simpl. done.
+  + simpl in *.
+    pose proof (fill_not_atomic K e e1' (RTSkipS stk_id)).
+    simpl in H3.
+    specialize (H3 I).
+    symmetry in H0. contradiction.
+Qed.
+
+Lemma atomic_stuck :
+  Atomic WeaklyAtomic RTStuckS.
+Proof.
+  unfold Atomic. intros.
+  inversion H.
+
+  destruct K.
+  + simpl in *; subst. inversion H2.
+  + simpl in *.
+    pose proof (fill_not_atomic K e e1' RTStuckS).
+    simpl in H3.
+    specialize (H3 I).
+    symmetry in H0. contradiction.
+Qed.
+
+Lemma atomic_fld_rd v e fld stk_id :
+  Atomic WeaklyAtomic (RTFldRd v e fld stk_id).
+Proof.
+  unfold Atomic. intros.
+  inversion H.
+
+  destruct K.
+  + simpl in *; subst. inversion H2. apply val_irreducible. simpl. done.
+  + simpl in *.
+    pose proof (fill_not_atomic K e0 e1' (RTFldRd v e fld stk_id)).
+    simpl in H3.
+    specialize (H3 I).
+    symmetry in H0. contradiction.
+Qed.
+
+Lemma atomic_cas v e1 fld e2 e3 stk_id :
+  Atomic WeaklyAtomic (RTCAS v e1 fld e2 e3 stk_id).
+Proof.
+  unfold Atomic. intros.
+  inversion H.
+
+  destruct K.
+  + simpl in *; subst. inversion H2.
+    ++ apply val_irreducible. simpl. done.
+    ++ apply val_irreducible. simpl. done.
+  + simpl in *.
+    pose proof (fill_not_atomic K e e1' (RTCAS v e1 fld e2 e3 stk_id)).
+    simpl in H3.
+    specialize (H3 I).
+    symmetry in H0. contradiction.
+Qed.
+
+Lemma atomic_alloc v fs stk_id :
+  Atomic WeaklyAtomic (RTAlloc v fs stk_id).
+Proof.
+  unfold Atomic. intros.
+  inversion H.
+
+  destruct K.
+  + simpl in *; subst. inversion H2. apply val_irreducible. simpl. done.
+  + simpl in *.
+    pose proof (fill_not_atomic K e e1' (RTAlloc v fs stk_id)).
+    simpl in H3.
+    specialize (H3 I).
+    symmetry in H0. contradiction.
+Qed.
+
+Lemma atomic_spawn proc args stk_id :
+  Atomic WeaklyAtomic (RTSpawn proc args stk_id).
+Proof.
+  unfold Atomic. intros.
+  inversion H.
+
+  destruct K.
+  + simpl in *; subst. inversion H2. apply val_irreducible. simpl. done.
+  + simpl in *.
+    pose proof (fill_not_atomic K e e1' (RTSpawn proc args stk_id)).
+    simpl in H3.
+    specialize (H3 I).
+    symmetry in H0. contradiction.
+Qed.
+
+Lemma obs_list_empty s1 σ x e' σ' efs: @prim_step simp_ectx_lang  s1 σ x e' σ' efs -> x = [].
+Proof.
+  intros.
+  destruct H.
+  destruct H1; done.
+Qed.

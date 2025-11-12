@@ -58,7 +58,7 @@ Section lifting.
       
 
     - iNext. iIntros (e2 σ2 efs) "%H Hcred".
-      inversion H as [  |  |  |  
+      inversion H as [  |  |  |  |  |
         | σ0 stk_id0 stk_frm0 e1 fld e' l0 v0 Hstk_frm0  Hl0 Hv0 
       |  |  |  |  |  |  |  ]; subst κ efs σ2 σ0 fld stk_id0 e' e1 e2; simpl; iFrame.
       
@@ -111,7 +111,7 @@ Section lifting.
       apply (RTAssignStep σ stk_id stk_frm v e v'); try done.
 
     - iNext. iIntros (e2 σ2 efs) "%H Hcred".
-      inversion H as [  | 
+      inversion H as [  |  |  |
         σ0 stk_id0 stk_frm0 e1 v0 e0 Hstk_frm0 Hv0 
       |  |  |  |  |  |  |  |  |  |  ]; subst κ efs σ2 σ0 v0 e1 e2; simpl. 
       (* iFrame. *)
@@ -162,7 +162,7 @@ Section lifting.
       apply (FldRdStep σ stk_id stk_frm x e fld l val); try done.
 
     - iModIntro. iNext. iIntros (e2 σ2 efs) "%H Hcred".
-      inversion H as [ | | | | | 
+      inversion H as [ | | | | | | |
           σ0 stk_id0 stk_frm0 v0 e0 fld0 l0 v2 Hstk_frm0 HexSt HlookUp
         |  |  |  |  |  |  ]; subst v0 e0 fld0 stk_id0 σ0 κ e2 σ2 efs. simpl. iFrame "Hproc Hhp".
 
@@ -225,7 +225,7 @@ Section lifting.
       apply (AllocStep σ stk_id x fs); try done.
 
     - iModIntro. iNext. iIntros (e2 σ2 efs) "%H Hcred".
-    inversion H as [  |  |  |  |  |  |  |
+    inversion H as [  |  |  |  |  |  |  |  |  |
         | σ0 stk_id0 x0 fs0
         |  |  |  ]; subst x0 fs0 stk_id0 σ0 κ e2 σ2 efs; simpl; iFrame.
         iSplitR; try done.
@@ -333,7 +333,7 @@ Section lifting.
     - iModIntro. iIntros (e2 σ2 efs).
     
     iIntros "%H Hcred".
-    inversion H as [ | | | | | | | | | | | ]; subst s0 σ0 κ s2 σ2 efs. iFrame.
+    inversion H; subst s0 σ0 κ s2 σ2 efs. iFrame.
     simpl. 
     iMod "Hemp". iModIntro.
     iFrame.
@@ -455,24 +455,102 @@ Section lifting.
     intros Hstp.
     iIntros "#Hhoare".
     iIntros (Φ). iModIntro. iIntros "[Hstk Hp] HΦ".
-    iApply wp_lift_base_step; first done.
+
+    destruct (to_val s1) eqn:Hs1_val.
+    2: {
+          iApply wp_unfold.
     iIntros (σ ns κ κs nt) "Hstate".
+
     iDestruct "Hstate" as "[Hhp [Hproc Hstack]]".
     iPoseProof (stack_interp_agreement with "Hstack Hstk") as "%HstkPure".
-    iApply fupd_mask_intro. { set_unfold. try done. }
     
-    iIntros "Hfupd". iSplitR.
-    - iPureIntro. unfold base_reducible. exists [], s1, σ, [].
-    apply (RTIfSStep σ stk_id stk_frm e s1 s2 true); try done.
+    iSpecialize ("Hhoare" $! Φ with "[Hstk Hp] HΦ"); iFrame.
+      iPoseProof (wp_unfold with "Hhoare") as "Hhoare".
+      unfold wp_pre.
+      rewrite Hs1_val.
+      iSpecialize ("Hhoare" $! σ ns κ κs nt with "[Hhp Hproc Hstack]"); iFrame.
+      iDestruct "Hhoare" as ">[%Hred Hrest]".
+      iModIntro.
+      destruct Hred.
+      destruct H as [e' [σ' [efs Hprim]]].
+      simpl in x.
 
-    - iNext. iIntros (e2 σ2 efs) "%H Hcred".
-    inversion H; subst e0 s0 s3 stk_id0 σ0 κ e2 σ2 efs.
-    iMod "Hfupd".
-    iModIntro. iFrame. simpl. iFrame. 
-    rewrite HstkPure in H9. inversion H9. subst stk_frm0. clear H9.
-    pose proof (expr_step_val_unique e stk_frm (LitBool true) (LitBool b) Hstp H10).
-    inversion H0.
-    iApply ("Hhoare" with "[Hstk Hp]" ); try iFrame.
+      iSplitR.
+      + iPureIntro. unfold base_reducible. exists [], e', σ', efs.
+        apply (Ectx_step [] (RTIfS e s1 s2 stk_id) e'); try done.
+      apply  (RTIfTStep σ stk_id stk_frm e s1 s2 e' σ' efs); try done.
+      pose proof  (obs_list_empty _ _ _ _ _ _ Hprim) as Hx_empt; subst.
+      destruct Hprim.
+      exists e1', e2', K.
+      split; try done.
+      
+      + 
+        iIntros (e2 σ2 efs0).
+        iSpecialize ("Hrest" $! e2 σ2 efs0).
+        iIntros "%Hbase".
+        simpl in *.
+        inversion Hbase; subst. simpl in *.
+
+        pose proof  (obs_list_empty _ _ _ _ _ _ Hbase) as Hx_empt; subst.
+
+        assert (K = []).
+        { destruct K; try done. simpl in *.
+          pose proof (fill_not_if K e0 e1' e s1 s2 stk_id). symmetry in H. contradiction. }
+        subst. simpl in *. subst.
+
+        inversion H1; subst.
+
+        2: { rewrite HstkPure in H5. inversion H5; subst. pose proof (expr_step_val_unique _ _ _ _ Hstp H9). discriminate. }
+
+        2: { rewrite HstkPure in H5. inversion H5; subst. pose proof (expr_step_val_unique _ _ _ _ Hstp H9). inversion H; subst. destruct s1; simpl; try (exfalso; done). }
+
+        ++ simpl in *. assert (prim_step s1 σ [] e2' σ2 efs0).
+          { destruct H10 as [e1'' [e2'' [K [Hfill1 [Hfill2 Hrtm]]]]]. apply (Ectx_step K e1'' e2''); try done. }
+          iSpecialize ("Hrest" $! H).
+          iExact "Hrest".
+    }
+
+    1: {
+      iApply wp_lift_base_step; first done.
+      iIntros (σ ns κ κs nt) "Hstate".
+          iDestruct "Hstate" as "[Hhp [Hproc Hstack]]".
+    iPoseProof (stack_interp_agreement with "Hstack Hstk") as "%HstkPure".
+    iApply fupd_mask_intro. { set_unfold. try done. }
+
+    iSpecialize ("Hhoare" $! Φ with "[Hstk Hp] HΦ"); iFrame.
+
+    iIntros "Hfupd".
+    iSplitR.
+    - iPureIntro. unfold base_reducible. exists [], s1, σ, [].
+    destruct s1 eqn:Hs1; simpl in Hs1_val; try discriminate.
+    rewrite <- Hs1.
+    apply (RTIfValStep σ stk_id stk_frm e s1 s2 true); try done.
+    rewrite Hs1. done.
+
+
+    -
+      iIntros (e2 σ2 efs).
+      iNext. iIntros "%Hbase Hcr".
+      iMod "Hfupd". iModIntro.
+      inversion Hbase; subst.
+      1: {  
+        destruct s1 eqn:Hs1; simpl in Hs1_val; try discriminate.
+        destruct H10 as [e1' [e2' [K [Hs1' [Hs2' Hrtm]]]]].
+
+      assert (K = []).
+      { destruct K; try done. simpl in *.
+          pose proof (lang.fill_not_val K e0 e1' v1). symmetry in Hs1'. contradiction. }
+      subst. simpl in *. symmetry in Hs1'. subst.
+      inversion Hrtm.
+      
+      }
+
+      2: { rewrite HstkPure in H8. inversion H8; subst. pose proof (expr_step_val_unique e stk_frm0 _ _ Hstp H9). inversion H; subst. iFrame. simpl in *. iFrame. }
+
+      1: { rewrite HstkPure in H8. inversion H8; subst. pose proof (expr_step_val_unique e stk_frm0 _ _ Hstp H9). inversion H. }
+      
+
+     }
   Qed.
 
   Lemma wp_if_f e s1 s2 stk_id stk_frm p q v mask :
@@ -483,24 +561,103 @@ Section lifting.
     intros Hstp.
     iIntros "#Hhoare".
     iIntros (Φ). iModIntro. iIntros "[Hstk Hp] HΦ".
-    iApply wp_lift_base_step; first done.
+
+
+    destruct (to_val s2) eqn:Hs2_val.
+    2: {
+          iApply wp_unfold.
     iIntros (σ ns κ κs nt) "Hstate".
+
     iDestruct "Hstate" as "[Hhp [Hproc Hstack]]".
     iPoseProof (stack_interp_agreement with "Hstack Hstk") as "%HstkPure".
-    iApply fupd_mask_intro. { set_solver. }
     
-    iIntros "Hfupd". iSplitR.
-    - iPureIntro. unfold base_reducible. exists [], s2, σ, [].
-    apply (RTIfSStep σ stk_id stk_frm e s1 s2 false); try done.
+    iSpecialize ("Hhoare" $! Φ with "[Hstk Hp] HΦ"); iFrame.
+      iPoseProof (wp_unfold with "Hhoare") as "Hhoare".
+      unfold wp_pre.
+      rewrite Hs2_val.
+      iSpecialize ("Hhoare" $! σ ns κ κs nt with "[Hhp Hproc Hstack]"); iFrame.
+      iDestruct "Hhoare" as ">[%Hred Hrest]".
+      iModIntro.
+      destruct Hred.
+      destruct H as [e' [σ' [efs Hprim]]].
+      simpl in x.
 
-    - iNext. iIntros (e2 σ2 efs) "%H Hcred".
-    inversion H; subst e0 s0 s3 stk_id0 σ0 κ e2 σ2 efs.
-    iMod "Hfupd".
-    iModIntro. iFrame. simpl. iFrame. 
-    rewrite HstkPure in H9. inversion H9. subst stk_frm0. clear H9.
-    pose proof (expr_step_val_unique e stk_frm (LitBool false) (LitBool b) Hstp H10).
-    inversion H0.
-    iApply ("Hhoare" with "[Hstk Hp]" ); try iFrame.
+      iSplitR.
+      + iPureIntro. unfold base_reducible. exists [], e', σ', efs.
+        apply (Ectx_step [] (RTIfS e s1 s2 stk_id) e'); try done.
+      apply  (RTIfFStep σ stk_id stk_frm e s1 s2 e' σ' efs); try done.
+      pose proof  (obs_list_empty _ _ _ _ _ _ Hprim) as Hx_empt; subst.
+      destruct Hprim.
+      exists e1', e2', K.
+      split; try done.
+      
+      + 
+        iIntros (e2 σ2 efs0).
+        iSpecialize ("Hrest" $! e2 σ2 efs0).
+        iIntros "%Hbase".
+        simpl in *.
+        inversion Hbase; subst. simpl in *.
+
+        pose proof  (obs_list_empty _ _ _ _ _ _ Hbase) as Hx_empt; subst.
+
+        assert (K = []).
+        { destruct K; try done. simpl in *.
+          pose proof (fill_not_if K e0 e1' e s1 s2 stk_id). symmetry in H. contradiction. }
+        subst. simpl in *. subst.
+
+        inversion H1; subst.
+
+        1: { rewrite HstkPure in H5. inversion H5; subst. pose proof (expr_step_val_unique _ _ _ _ Hstp H9). discriminate. }
+
+        2: { rewrite HstkPure in H5. inversion H5; subst. pose proof (expr_step_val_unique _ _ _ _ Hstp H9). inversion H; subst. destruct s2; simpl; try (exfalso; done). }
+
+        ++ simpl in *. assert (prim_step s2 σ [] e2' σ2 efs0).
+          { destruct H10 as [e1'' [e2'' [K [Hfill1 [Hfill2 Hrtm]]]]]. apply (Ectx_step K e1'' e2''); try done. }
+          iSpecialize ("Hrest" $! H).
+          iExact "Hrest".
+    }
+
+    1: {
+      iApply wp_lift_base_step; first done.
+      iIntros (σ ns κ κs nt) "Hstate".
+          iDestruct "Hstate" as "[Hhp [Hproc Hstack]]".
+    iPoseProof (stack_interp_agreement with "Hstack Hstk") as "%HstkPure".
+    iApply fupd_mask_intro. { set_unfold. try done. }
+
+    iSpecialize ("Hhoare" $! Φ with "[Hstk Hp] HΦ"); iFrame.
+
+    iIntros "Hfupd".
+    iSplitR.
+    - iPureIntro. unfold base_reducible. exists [], s2, σ, [].
+    destruct s2 eqn:Hs2; simpl in Hs2_val; try discriminate.
+    rewrite <- Hs2.
+    apply (RTIfValStep σ stk_id stk_frm e s1 s2 false); try done.
+    rewrite Hs2. done.
+
+
+    -
+      iIntros (e2 σ2 efs).
+      iNext. iIntros "%Hbase Hcr".
+      iMod "Hfupd". iModIntro.
+      inversion Hbase; subst.
+      2: { 
+        destruct s2 eqn:Hs2; simpl in Hs2_val; try discriminate.
+        destruct H10 as [e1' [e2' [K [Hs1' [Hs2' Hrtm]]]]].
+
+      assert (K = []).
+      { destruct K; try done. simpl in *.
+          pose proof (lang.fill_not_val K e0 e1' v1). symmetry in Hs1'. contradiction. }
+      subst. simpl in *. symmetry in Hs1'. subst.
+      inversion Hrtm.
+      
+      }
+
+      2: { rewrite HstkPure in H8. inversion H8; subst. pose proof (expr_step_val_unique e stk_frm0 _ _ Hstp H9). inversion H; subst. iFrame. simpl in *. iFrame. }
+
+      1: { rewrite HstkPure in H8. inversion H8; subst. pose proof (expr_step_val_unique e stk_frm0 _ _ Hstp H9). inversion H. }
+      
+
+     }
   Qed.
 
   Lemma Forall2_list_to_map_zip args arg_vals :
