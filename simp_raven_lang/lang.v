@@ -478,8 +478,83 @@ Lemma expr_step_val_unique e stk_frm v v0:
   expr_step e stk_frm (Val v) ->
   expr_step e stk_frm (Val v0) ->
   v = v0.
-Proof. 
-  Admitted.
+Proof.
+  (* High-level plan: structural induction on expression e.
+     For each syntactic form, we invert both derivations H1 and H2.
+     The key observations are:
+       - ExprRefl can only produce a Val output when e itself is a Val,
+         making both outputs trivially equal.
+       - VarStep is deterministic: the same local-variable lookup returns
+         the same value.
+       - UnOpStep/BinOpStep: determinism follows from the IH on the
+         sub-expression(s), combined with the fact that un_op_eval /
+         bin_op_eval are total functions (no side-effects or non-det).
+       - IfETrueStep/IfEFalseStep: the condition is already fully evaluated
+         to a concrete LitBool, so both H1 and H2 must take the same
+         branch.  A cross-branch pair (true in H1, false in H2) is
+         impossible because it would require LitBool true = LitBool false.
+       - StuckE: ExprRefl would require StuckE = Val _, a contradiction
+         that Rocq closes automatically on inversion. *)
+  rename v into vA. rename v0 into vB.
+  revert stk_frm vA vB.
+  induction e; intros stk_frm vA vB H1 H2.
+
+  - (* Var x: ExprRefl would give Var x = Val _, impossible.
+       Both derivations must be VarStep, looking up the same key
+       in the same frame, so the results are equal by congruence. *)
+    inversion H1; subst.
+    inversion H2; subst.
+    congruence.
+
+  - (* Val v: only ExprRefl applies (no other rule matches Val _),
+       giving vA = v and vB = v, hence vA = vB. *)
+    inversion H1; subst.
+    inversion H2; subst.
+    reflexivity.
+
+  - (* UnOp op e_inner: only UnOpStep can produce a Val output
+       (ExprRefl would give UnOp _ _ = Val _, impossible).
+       Both derivations evaluate the inner expression to some val;
+       the IH shows those inner vals agree.  Since un_op_eval is a
+       function, the outer results also agree. *)
+    inversion H1; subst.
+    inversion H2; subst.
+    assert (Hinner : v = v0) by (eapply IHe; eassumption).
+    subst. congruence.
+
+  - (* BinOp op e1 e2: only BinOpStep applies.
+       Apply IHe1 and IHe2 to unify the two pairs of operand values,
+       then bin_op_eval being a function closes the goal. *)
+    inversion H1; subst.
+    inversion H2; subst.
+    assert (Hl : v1 = v0) by (eapply IHe1; eassumption).
+    assert (Hr : v2 = v3) by (eapply IHe2; eassumption).
+    subst. congruence.
+
+  - (* IfE e_cond e_then e_else:
+       ExprRefl is ruled out (IfE _ _ _ ≠ Val _).
+       A Val output can only arise when the condition is already
+       fully evaluated:
+         IfETrueStep  (cond = LitBool true,  output = e_then = Val vA)
+         IfEFalseStep (cond = LitBool false, output = e_else = Val vA)
+       After inverting H1, we invert H2.  Cross-branch cases
+       (one true, one false) are contradicted by
+         LitBool true = LitBool false (discriminate).
+       Same-branch cases give the same output expression, so vA = vB. *)
+    inversion H1; subst.
+    + (* H1 used IfETrueStep *)
+      inversion H2; subst.
+      * reflexivity.  (* H2 also IfETrueStep: same output *)
+      * discriminate. (* H2 used IfEFalseStep: true ≠ false *)
+    + (* H1 used IfEFalseStep *)
+      inversion H2; subst.
+      * discriminate. (* H2 used IfETrueStep: false ≠ true *)
+      * reflexivity.  (* H2 also IfEFalseStep: same output *)
+
+  - (* StuckE: ExprRefl would require StuckE = Val vA, a contradiction.
+       Rocq resolves this automatically on inversion. *)
+    inversion H1; subst.
+Qed.
 
 
 Lemma Forall2_expr_step_val_unique :
