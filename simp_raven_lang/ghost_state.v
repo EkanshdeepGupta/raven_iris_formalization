@@ -84,14 +84,29 @@ Section definitions.
   Definition proc_tbl_chunk (p : proc_name) (proc : proc) : iProp Σ :=
     p ↪[heap_proctbl_name] proc.
 
-  Lemma heap_update σ l f x v0: 
+  Lemma heap_update σ l f x v0:
     (● ((λ v1 : lang.val, to_heap_cellR v1) <$> global_heap σ)
-    ⋅ ◯ {[heap_addr_constr l f := (1%Qp, to_agree x)]}) ~~> 
-    
+    ⋅ ◯ {[heap_addr_constr l f := (1%Qp, to_agree x)]}) ~~>
+
     (● ((λ v1 : lang.val, to_heap_cellR v1) <$> <[heap_addr_constr l f:=v0]> (global_heap σ))
     ⋅ ◯ {[heap_addr_constr l f := (1%Qp, to_agree v0)]}).
   Proof.
-  Admitted.
+    (* Strategy:
+       1. [auth_update] reduces the goal to a local update on the underlying gmap.
+       2. Rewrite the RHS auth component using [fmap_insert] so the updated map
+          has the shape [<[k := new_cell]> old_map] that [singleton_local_update_any]
+          expects.
+       3. [singleton_local_update_any] reduces to a per-cell local update.
+       4. The cell (1%Qp, to_agree _) is Exclusive (because 1%Qp is exclusive in fracR
+          via [frac_full_exclusive] + [pair_exclusive_l]), so [exclusive_local_update]
+          closes the goal with a validity check that is trivially [done]. *)
+    apply auth_update.
+    rewrite fmap_insert.
+    apply singleton_local_update_any.
+    intros x_auth _.
+    apply exclusive_local_update.
+    done.
+  Qed.
 
 
   

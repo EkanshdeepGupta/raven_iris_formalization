@@ -97,22 +97,42 @@ Section MainTranslation.
       - inversion H1.
     Qed.
 
+    (* The four lemmas below exploit the correctness lemmas that
+       [Scheme Equality for val] generates:
+         internal_val_dec_lb : v1 = v2  → val_beq v1 v2 = true
+         internal_val_dec_bl : val_beq v1 v2 = true → v1 = v2
+       For [internal_loc_beq_refl], note that [val_beq (LitLoc l) (LitLoc l)]
+       reduces definitionally to [internal_loc_beq l l], so the witness
+       produced by [internal_val_dec_lb] can be used directly. *)
+
     Lemma internal_loc_beq_refl l :
       internal_loc_beq l l = true.
     Proof.
-      Admitted.
+      (* val_beq (LitLoc l) (LitLoc l)  ≡  internal_loc_beq l l  by reduction.
+         internal_val_dec_lb gives val_beq (LitLoc l) (LitLoc l) = true, which
+         Coq accepts as a proof of internal_loc_beq l l = true by δ-equality. *)
+      exact (internal_val_dec_lb (LitLoc l) (LitLoc l) eq_refl).
+    Qed.
 
     Lemma val_beq_refl (v : val) : val_beq v v = true.
     Proof.
-      Admitted.
+      (* Straight application of the Scheme-generated "= → beq" direction. *)
+      apply internal_val_dec_lb. reflexivity.
+    Qed.
 
     Lemma val_beq_eq (v1 : val) (v2 : val) : val_beq v1 v2 = true -> v1 = v2.
     Proof.
-      Admitted.
+      (* Straight application of the Scheme-generated "beq → =" direction. *)
+      apply internal_val_dec_bl.
+    Qed.
 
     Lemma val_beq_neq v1 v2 : val_beq v1 v2 = false -> v1 ≠ v2.
     Proof.
-      Admitted.
+      (* Contrapositive: if v1 = v2 then val_beq v1 v2 = true (val_beq_refl),
+         contradicting the hypothesis val_beq v1 v2 = false. *)
+      intros Hfalse ->.
+      rewrite val_beq_refl in Hfalse. discriminate.
+    Qed.
 
     Lemma expr_interp_well_defined stk e mp lexpr: 
       trnsl_expr_lExpr stk e = Some lexpr -> 
