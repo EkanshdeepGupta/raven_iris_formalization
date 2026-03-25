@@ -730,8 +730,13 @@ Section lifting.
 
   - iNext. iIntros (e2 σ2 efs) "%H Hcred".
     inversion H; subst proc0 args0 stk_id0 σ1 κ σ2 e2 efs.
-    iMod "Hfupd". 
-    iPoseProof ((stack_new_stk_frm_upd σ new_stk_frame) with "Hstack") as ">[Hstack' Hstk']".
+    iMod "Hfupd".
+    (* Freshness: the new stack id (Z.of_nat (Z.to_nat σ.(max_stack_id) + 1))
+       must not yet be in the stack map.  This follows from the invariant that
+       all allocated stack ids are ≤ max_stack_id, but that invariant is not
+       yet threaded through state_interp; admit it for now. *)
+    assert (Hfresh_new : stack σ !! Z.of_nat (Z.to_nat σ.(max_stack_id) + 1) = None) by admit.
+    iPoseProof ((stack_new_stk_frm_upd σ new_stk_frame Hfresh_new) with "Hstack") as ">[Hstack' Hstk']".
     
     simpl; iFrame. iModIntro.
 
@@ -777,7 +782,7 @@ Section lifting.
       * iNext. iIntros (e2 σ2 efs H') "Hcred'".
        inversion H'; subst var callee_stk_id caller_stk_id σ0 κ e2 σ2 efs.
        iSplitR; try done. iFrame. simpl. iModIntro. iApply "HΦ". iFrame.
-  Qed.
+  Admitted. (* admit used for Hfresh_new above; replace with Qed once that is proved *)
 
 End lifting.
 

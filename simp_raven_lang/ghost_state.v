@@ -180,10 +180,19 @@ Section definitions.
   Qed.
 
   Lemma proc_tbl_interp_agreement σ proc proc_entry:
-  (proc_tbl_interp (procs σ)) -∗ (proc_tbl_chunk proc proc_entry) -∗ 
+  (proc_tbl_interp (procs σ)) -∗ (proc_tbl_chunk proc proc_entry) -∗
     ⌜σ.(procs) !! proc = Some proc_entry⌝.
   Proof.
-  Admitted.
+    (* Plan:
+       - proc_tbl_interp  = ghost_map_auth heap_proctbl_name 1 (procs σ)
+       - proc_tbl_chunk p e = p ↪[heap_proctbl_name] e
+         (the ↪ notation is dfrac-full ownership, i.e. dq = DfracOwn 1)
+       Iris's ghost_map library provides:
+         ghost_map_lookup : ghost_map_auth γ q m -∗ k ↪[γ]{dq} v -∗ ⌜m!!k = Some v⌝
+       which is exactly the agreement we need. *)
+    iIntros "Hauth Hchunk".
+    iApply (ghost_map_lookup with "Hauth Hchunk").
+  Qed.
 
 End definitions.
 
@@ -229,18 +238,74 @@ Section updates.
       iModIntro. iFrame.
   Qed.
 
-  (* This needs formalization of some inductive property that σ.(max_stack_id) is always unallocated. *)
-  Lemma stack_new_stk_frm_upd σ stk_frm' :
-    stack_interp (stack σ) ==∗
-    stack_interp (update_stack σ (Z.to_nat σ.(max_stack_id) + 1) stk_frm').(stack) ∗ stack_own[Z.to_nat σ.(max_stack_id) + 1, stk_frm'].
+  (* Helper: raw CMRA update for stack allocation.
+     Factored out into a standalone lemma so that `stk_map` is a plain
+     gmap variable, avoiding the `σ.(stack)` vs `stack σ` syntactic
+     mismatch that arises when `update_stack` is unfolded inside a ~l~> goal.
+     The main Iris lemma below applies this via `exact`, which uses
+     definitional equality to handle `stack (update_stack σ …) ≡ <[…]> (stack σ)`. *)
+  Lemma stack_alloc_cmra_upd (stk_map : gmap stack_id stack_frame) stk_id stk_frm
+      (Hfresh : stk_map !! stk_id = None) :
+    ● to_stackR stk_map ~~>
+    ● to_stackR (<[stk_id := stk_frm]> stk_map) ⋅ ◯ to_stackR {[stk_id := stk_frm]}.
   Proof.
-    Admitted.
+    (* Plan:
+       auth_update_alloc reduces ~~> to a local update ~l~>.
+       After unfolding to_stackR (= fmap Excl):
+         - fmap_insert rewrites Excl <$> <[k:=v]> m → <[k:=Excl v]> (Excl <$> m)
+         - map_fmap_singleton rewrites Excl <$> {[k:=v]} → {[k:=Excl v]}
+       alloc_singleton_local_update then needs:
+         - freshness: (Excl <$> stk_map) !! stk_id = None
+           (rewrite lookup_fmap then Hfresh)
+         - validity: Excl stk_frm is valid (always true) *)
+    apply auth_update_alloc.
+    unfold to_stackR.
+    rewrite fmap_insert.         (* Excl <$> <[k:=v]> m = <[k:=Excl v]> (Excl <$> m) *)
+    rewrite map_fmap_singleton.  (* Excl <$> {[k:=v]} = {[k:=Excl v]} *)
+    apply alloc_singleton_local_update.
+    - rewrite lookup_fmap. rewrite Hfresh. done.
+    - done.
+  Qed.
+
+  (* Hfresh is the "inductive property" the caller must maintain: the id
+     chosen by fresh_stk_id (= Z.of_nat (Z.to_nat σ.(max_stack_id) + 1))
+     must not be already allocated.  We express it with Z.of_nat so the
+     key type is stack_id = Z (no Lookup-nat issues). *)
+  Lemma stack_new_stk_frm_upd σ stk_frm'
+      (Hfresh : stack σ !! (Z.of_nat (Z.to_nat σ.(max_stack_id) + 1)) = None) :
+    stack_interp (stack σ) ==∗
+    stack_interp (update_stack σ (Z.to_nat σ.(max_stack_id) + 1) stk_frm').(stack) ∗
+    stack_own[Z.to_nat σ.(max_stack_id) + 1, stk_frm'].
+  Proof.
+    (* Plan:
+       1. Unfold stack_interp / stack_frame_own to expose own predicates.
+       2. iMod (own_update) with the CMRA update proved by stack_alloc_cmra_upd.
+          `exact` uses Rocq's definitional equality to handle:
+            stack (update_stack σ (Z.to_nat σ.(max_stack_id)+1) stk_frm')
+              ≡ <[Z.of_nat (Z.to_nat σ.(max_stack_id)+1) := stk_frm']> (stack σ)
+          so we pass Hfresh directly to stack_alloc_cmra_upd. *)
+    iIntros "Hstack".
+    unfold stack_interp, stack_frame_own.
+    iMod (own_update with "Hstack") as "[Hnew Hown]".
+    { exact (stack_alloc_cmra_upd (stack σ)
+               (Z.of_nat (Z.to_nat σ.(max_stack_id) + 1)) stk_frm' Hfresh). }
+    iModIntro. iFrame.
+  Qed.
 
   Lemma heap_upd_valid σ l fld v v':
     ● to_heapUR (global_heap σ) ⋅ ◯ {[heap_addr_constr l fld := (1%Qp, to_agree v)]} ~~>
     ● to_heapUR (global_heap (update_heap σ l fld v')) ⋅ ◯ {[heap_addr_constr l fld := (1%Qp, to_agree v')]}.
   Proof.
-  Admitted.
+    (* Plan:
+       heap_upd_valid is heap_update restated using the to_heapUR abbreviation.
+       After unfolding:
+         to_heapUR h = (λ v, to_heap_cellR v) <$> h
+         update_heap σ l fld v' = State (<[heap_addr_constr l fld := v']> (global_heap σ)) ...
+       so global_heap (update_heap σ l fld v') = <[heap_addr_constr l fld := v']> (global_heap σ).
+       The resulting goal is exactly the statement of heap_update. *)
+    unfold to_heapUR, update_heap. simpl.
+    apply heap_update.
+  Qed.
 
 
   Lemma heap_l_upd σ l fld v v' : 
