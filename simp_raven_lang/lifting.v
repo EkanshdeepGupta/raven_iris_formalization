@@ -125,19 +125,20 @@ Section lifting.
       
       iCombine "Hstack" "Hstk" as "Hcomb".
       iSplitR; first done.
-      iPoseProof (own_update heap_stack_name 
+      iPoseProof (own_update heap_stack_name
           (● to_stackR (stack σ) ⋅ ◯ to_stackR {[stk_id := stk_frm]})
           (● to_stackR (stack σ') ⋅ ◯ to_stackR {[stk_id := {| locals := <[v:=e0]> (locals stk_frm) |}]})
 
            with "Hcomb"
-      ) 
+      )
           as "Hcomb2".
-      { apply stack_upd_valid. }
+      { apply (stack_upd_valid _ _ _ _ _ Hstk_frm0). }
       iMod "Hcomb2" as "Hcomb".
       iDestruct "Hcomb" as "[Hauth Hfrag]".
       iModIntro. iFrame.
-      (* iSplitL "Hauth".
-      + by iFrame. *)
+      replace (global_heap σ') with (global_heap σ) by (unfold σ', update_lvar; rewrite HstkPure; done).
+      replace (procs σ') with (procs σ) by (unfold σ', update_lvar; rewrite HstkPure; done).
+      iFrame.
 
       + iApply "HΦ". by iFrame.
 
@@ -164,37 +165,38 @@ Section lifting.
     - iModIntro. iNext. iIntros (e2 σ2 efs) "%H Hcred".
       inversion H as [ | | | | | | |
           σ0 stk_id0 stk_frm0 v0 e0 fld0 l0 v2 Hstk_frm0 HexSt HlookUp
-        |  |  |  |  |  |  ]; subst v0 e0 fld0 stk_id0 σ0 κ e2 σ2 efs. simpl. iFrame "Hproc Hhp".
+        |  |  |  |  |  |  ]; subst v0 e0 fld0 stk_id0 σ0 κ e2 σ2 efs. simpl.
+      iSplitR; try done.
 
-      assert (stk_frm0 = stk_frm) as Hstkfrm_subst. { 
-          rewrite HstkPure in Hstk_frm0.  
+      assert (stk_frm0 = stk_frm) as Hstkfrm_subst. {
+          rewrite HstkPure in Hstk_frm0.
           injection Hstk_frm0 as Hstk_frm0; try done.
       } subst stk_frm0.
-    
-      assert (LitLoc l = LitLoc l0) as Hlsubst. 
+
+      assert (LitLoc l = LitLoc l0) as Hlsubst.
         { apply (expr_step_val_unique _ _ _ _ HexprStep HexSt). } injection  Hlsubst as Hl. subst l0.
-      (* iModIntro. *)
 
       assert (val = v2) as Hvalsubst. {
         rewrite HHeapPure in HlookUp.
         injection HlookUp as HlookUp; try done.
       } subst v2.
 
-      iSplitR; try done.
-
       iCombine "Hstack" "Hstk" as "Hcomb".
 
-      iPoseProof (own_update heap_stack_name 
+      iPoseProof (own_update heap_stack_name
           (● to_stackR (stack σ) ⋅ ◯ to_stackR {[stk_id := stk_frm]})
           (● to_stackR (stack σ') ⋅ ◯ to_stackR {[stk_id := {| locals := <[x:=val]> (locals stk_frm) |}]})
 
            with "Hcomb"
-      ) 
+      )
           as "Hcomb2".
-      { apply stack_upd_valid. }
+      { apply (stack_upd_valid _ _ _ _ _ HstkPure). }
       iMod "Hcomb2" as "Hcomb".
       iDestruct "Hcomb" as "[Hauth Hfrag]".
       iModIntro. iFrame.
+      replace (global_heap σ') with (global_heap σ) by (unfold σ', update_lvar; rewrite HstkPure; done).
+      replace (procs σ') with (procs σ) by (unfold σ', update_lvar; rewrite HstkPure; done).
+      iFrame.
       iApply "HΦ". iFrame.
   Qed.
 
@@ -267,22 +269,22 @@ Section lifting.
            with "Hcomb"
       )
           as "Hcomb2".
-      { apply stack_upd_valid. }
+      { rewrite H0 in HstkPure. apply (stack_upd_valid _ _ _ _ _ HstkPure). }
       iMod "Hcomb2" as "Hcomb".
       iDestruct "Hcomb" as "[Hauth Hfrag]".
       iDestruct "HHeapUpd" as ">[HHeapUpd HHp2]".
       iModIntro. iFrame.
-
-      assert (procs σ'' = procs σ) as H1.
-      { clear H H0. subst σ''. simpl. subst σ'. induction fs.
+      replace (global_heap σ'') with (global_heap σ') by (unfold σ'', update_lvar; rewrite <- H0; rewrite HstkPure; done).
+      replace (procs σ'') with (procs σ') by (unfold σ'', update_lvar; rewrite <- H0; rewrite HstkPure; done).
+      assert (procs σ' = procs σ) as Hprocs.
+      { clear H H0. subst σ'. induction fs.
       - simpl. done.
-      - unfold fs_map in IHfs. simpl. apply IHfs. inversion HNoDup. done.  }
-
-      rewrite H1. iFrame.
+      - simpl. unfold update_heap. simpl. apply IHfs. inversion HNoDup. done. }
+      rewrite Hprocs. iFrame.
       iApply "HΦ".
       iExists l. iFrame.
 
-      clear H H0 H1.
+      clear H H0 Hprocs.
       iInduction fs as [ | ] "IHfs".
       + simpl. done.
       +
@@ -391,11 +393,19 @@ Section lifting.
         iModIntro.
         iSplitR; try auto.
          
-        assert (global_heap (update_lvar σ' x stk_id (LitBool true)) = global_heap σ').
-        { simpl. done. }
-        rewrite H0.
-        iFrame.
-        iApply "HΦ". iFrame.
+        have Hstk' : stack σ' !! stk_id = Some stk_frm.
+        { unfold σ'. simpl. exact HstkPure. }
+        change (state_interp (update_lvar σ' x stk_id (LitBool true)) (S ns) κs nt) with
+          (ghost_state.state_interp (update_lvar σ' x stk_id (LitBool true))).
+        unfold ghost_state.state_interp.
+        replace (global_heap (update_lvar σ' x stk_id (LitBool true))) with (global_heap σ') by
+          (unfold update_lvar, σ'; simpl; rewrite HstkPure; done).
+        replace (procs (update_lvar σ' x stk_id (LitBool true))) with (procs σ) by
+          (unfold update_lvar, σ'; simpl; rewrite HstkPure; done).
+        replace (stack (update_lvar σ' x stk_id (LitBool true))) with (stack (update_lvar σ x stk_id (LitBool true))) by
+          (unfold update_lvar, σ'; simpl; rewrite HstkPure; done).
+        iFrame "Hhp Hstack Hproc".
+        simpl. iApply "HΦ". iFrame.
 
       + rewrite HstkPure in H11. inversion H11; subst stk_frm0.
         assert (l0 = l) as Hl. { assert (LitLoc l0 = LitLoc l). { apply (expr_step_val_unique e1 stk_frm (LitLoc l0) (LitLoc l)); try done. } inversion H0; done. } subst l0.
@@ -444,7 +454,16 @@ Section lifting.
         iPoseProof (stack_lvar_upd _ _ _ x (LitBool false) with "[Hstk Hstack]") as "Hstk_upd"; try iFrame.
 
         iDestruct "Hstk_upd" as ">[Hstk Hstack]".
-        iModIntro. iSplitR; try done. iFrame. iApply "HΦ". iFrame.
+        iModIntro. iSplitR; try done.
+        change (state_interp σ' (S ns) κs nt) with
+          (ghost_state.state_interp σ').
+        unfold ghost_state.state_interp.
+        replace (global_heap σ') with (global_heap σ) by
+          (unfold σ', update_lvar; rewrite HstkPure; done).
+        replace (procs σ') with (procs σ) by
+          (unfold σ', update_lvar; rewrite HstkPure; done).
+        iFrame "Hhp Hstack Hproc".
+        simpl. iApply "HΦ". iFrame.
   Qed.
 
   Lemma wp_if_t e s1 s2 stk_id stk_frm p q v mask :
@@ -781,7 +800,21 @@ Section lifting.
 
       * iNext. iIntros (e2 σ2 efs H') "Hcred'".
        inversion H'; subst var callee_stk_id caller_stk_id σ0 κ e2 σ2 efs.
-       iSplitR; try done. iFrame. simpl. iModIntro. iApply "HΦ". iFrame.
+       assert (callee_stack = stk_frm'') as Hcallee.
+       { rewrite HstkPure3 in H10. injection H10. done. }
+       subst callee_stack.
+       assert (ret_val0 = ret_val) as Hretval.
+       { rewrite Hret in H11. injection H11. done. }
+       subst ret_val0.
+       iModIntro. iSplitR; try done.
+       change (state_interp σ' (S ns0) κs0 nt0) with (ghost_state.state_interp σ').
+       unfold ghost_state.state_interp.
+       replace (global_heap σ') with (global_heap σ1) by
+         (unfold σ', update_lvar; rewrite HstkPure2; done).
+       replace (procs σ') with (procs σ1) by
+         (unfold σ', update_lvar; rewrite HstkPure2; done).
+       iFrame "Hhp Hstack Hproc".
+       simpl. iApply "HΦ". iFrame.
   Admitted. (* admit used for Hfresh_new above; replace with Qed once that is proved *)
 
 End lifting.

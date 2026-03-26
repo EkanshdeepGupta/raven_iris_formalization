@@ -204,38 +204,35 @@ Notation "'stack_own[' stk_id , frm ']' " := (stack_frame_own stk_id frm)
 
 Section updates.
     Context `{!heapG Σ}.
-  Lemma stack_upd_valid σ stk_id stk_frm v val:
-    let σ' := update_lvar σ v stk_id val in
-      ● to_stackR (stack σ) ⋅ ◯ to_stackR {[stk_id := stk_frm]} ~~>
-      ● to_stackR (stack σ') ⋅ ◯ to_stackR {[stk_id := {| locals := <[v:=val]> (locals stk_frm) |}]}.
+  Lemma stack_upd_valid σ stk_id stk_frm v val
+      (Hlookup : stack σ !! stk_id = Some stk_frm) :
+    ● to_stackR (stack σ) ⋅ ◯ to_stackR {[stk_id := stk_frm]} ~~>
+    ● to_stackR (stack (update_lvar σ v stk_id val))
+    ⋅ ◯ to_stackR {[stk_id := {| locals := <[v:=val]> (locals stk_frm) |}]}.
   Proof.
-    intros σ'.
+    unfold update_lvar. rewrite Hlookup. simpl.
     apply auth_update.
-    apply iris.algebra.gmap.gmap_local_update.
-    intros stk_id'.
-    destruct (stack σ !! stk_id') eqn:HstkLookup.
-    - rewrite lookup_fmap. rewrite HstkLookup. simpl.
-    destruct (Z.eqb stk_id stk_id') eqn:Hstkid.
-      + rewrite Z.eqb_eq in Hstkid. subst stk_id'. rewrite lookup_fmap. rewrite lookup_insert. simpl. rewrite lookup_fmap. rewrite lookup_insert. simpl.
-
-  Admitted.
+    unfold to_stackR. rewrite fmap_insert. rewrite !map_fmap_singleton.
+    apply (singleton_local_update _ stk_id (Excl stk_frm)).
+    - rewrite lookup_fmap. rewrite Hlookup. done.
+    - apply exclusive_local_update. done.
+  Qed.
 
   Lemma stack_lvar_upd σ stk_id stk_frm x v :
-    stack_own[ stk_id, stk_frm ] ∗ stack_interp (stack σ) ==∗ 
+    stack_own[ stk_id, stk_frm ] ∗ stack_interp (stack σ) ==∗
     stack_own[stk_id, StackFrame (<[x := v]> stk_frm.(locals)) ] ∗ stack_interp (stack (update_lvar σ x stk_id v)).
   Proof.
     iIntros "[Hstk Hstack]".
+    iDestruct (stack_interp_agreement with "Hstack Hstk") as %Hlookup.
     iCombine "Hstack" "Hstk" as "Hcomb".
-      iPoseProof (own_update heap_stack_name 
-          (● to_stackR (stack σ) ⋅ ◯ to_stackR {[stk_id := stk_frm]})
-          (● to_stackR (stack (update_lvar σ x stk_id v)) ⋅ ◯ to_stackR {[stk_id := {| locals := <[x:=v]> (locals stk_frm) |}]})
-
-           with "Hcomb"
-      ) 
-          as "Hcomb2".
-      { apply stack_upd_valid. }
-      iDestruct "Hcomb2" as ">[Hstack Hstk]".
-      iModIntro. iFrame.
+    iPoseProof (own_update heap_stack_name
+        (● to_stackR (stack σ) ⋅ ◯ to_stackR {[stk_id := stk_frm]})
+        (● to_stackR (stack (update_lvar σ x stk_id v)) ⋅ ◯ to_stackR {[stk_id := {| locals := <[x:=v]> (locals stk_frm) |}]})
+        with "Hcomb"
+    ) as "Hcomb2".
+    { apply (stack_upd_valid _ _ _ _ _ Hlookup). }
+    iDestruct "Hcomb2" as ">[Hstack Hstk]".
+    iModIntro. iFrame.
   Qed.
 
   (* Helper: raw CMRA update for stack allocation.

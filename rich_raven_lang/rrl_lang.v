@@ -1679,8 +1679,63 @@ Section TypeInf.
     trnsl_expr_lExpr stk e = Some le ->
     inf_expr ρ e = Some tp ->
     inf_lexpr σ le = Some tp.
-  Proof. 
-    Admitted.
+  Proof.
+    intros Hstk H2 H3. revert le tp H2 H3.
+    induction e; intros le tp H2 H3; simpl in *.
+    - (* Var x *)
+      destruct (stk !! x) as [lv|] eqn:Hstk_x; [|discriminate H2].
+      injection H2 as <-. injection H3 as <-.
+      simpl. apply Hstk in Hstk_x. rewrite <- Hstk_x. reflexivity.
+    - (* Val v *)
+      injection H2 as <-. injection H3 as <-.
+      simpl. rewrite trnsl_lval_trnsl_val_inverse. reflexivity.
+    - (* UnOp op e *)
+      destruct (trnsl_expr_lExpr stk e) as [le'|] eqn:Hle'; [|discriminate H2].
+      injection H2 as <-. simpl.
+      destruct op; simpl in H3;
+        [ destruct (inf_expr ρ e) as [[]|] eqn:Htp_e; try discriminate H3;
+          injection H3 as <-; rewrite (IHe le' TpBool eq_refl eq_refl); reflexivity
+        | destruct (inf_expr ρ e) as [[]|] eqn:Htp_e; try discriminate H3;
+          injection H3 as <-; rewrite (IHe le' TpInt eq_refl eq_refl); reflexivity ].
+    - (* BinOp op e1 e2 *)
+      destruct (trnsl_expr_lExpr stk e1) as [le1'|] eqn:Hle1'; [|discriminate H2].
+      destruct (trnsl_expr_lExpr stk e2) as [le2'|] eqn:Hle2'; [|discriminate H2].
+      injection H2 as <-. simpl.
+      destruct op; simpl in H3;
+        try (destruct (inf_expr ρ e1) as [[]|] eqn:Htp1; try discriminate H3;
+             destruct (inf_expr ρ e2) as [[]|] eqn:Htp2; try discriminate H3;
+             injection H3 as <-;
+             rewrite (IHe1 le1' TpInt eq_refl eq_refl);
+             rewrite (IHe2 le2' TpInt eq_refl eq_refl); reflexivity);
+        try (destruct (inf_expr ρ e1) as [[]|] eqn:Htp1; try discriminate H3;
+             destruct (inf_expr ρ e2) as [[]|] eqn:Htp2; try discriminate H3;
+             injection H3 as <-;
+             rewrite (IHe1 le1' TpBool eq_refl eq_refl);
+             rewrite (IHe2 le2' TpBool eq_refl eq_refl); reflexivity);
+        try (destruct (inf_expr ρ e1) as [tp1|] eqn:Htp1; try discriminate H3;
+             destruct (inf_expr ρ e2) as [tp2|] eqn:Htp2; try discriminate H3;
+             destruct (typ_beq tp1 tp2) eqn:Htyp; try discriminate H3;
+             injection H3 as <-;
+             rewrite (IHe1 le1' tp1 eq_refl eq_refl);
+             rewrite (IHe2 le2' tp2 eq_refl eq_refl);
+             rewrite Htyp; reflexivity).
+    - (* IfE e1 e2 e3 *)
+      destruct (trnsl_expr_lExpr stk e1) as [le1'|] eqn:Hle1'; [|discriminate H2].
+      destruct (trnsl_expr_lExpr stk e2) as [le2'|] eqn:Hle2'; [|discriminate H2].
+      destruct (trnsl_expr_lExpr stk e3) as [le3'|] eqn:Hle3'; [|discriminate H2].
+      injection H2 as <-. simpl.
+      destruct (inf_expr ρ e1) as [[]|] eqn:Htp1; try discriminate H3.
+      destruct (inf_expr ρ e2) as [tp2|] eqn:Htp2; try discriminate H3.
+      destruct (inf_expr ρ e3) as [tp3|] eqn:Htp3; try discriminate H3.
+      destruct (typ_beq tp2 tp3) eqn:Htyp; try discriminate H3.
+      injection H3 as <-.
+      rewrite (IHe1 le1' TpBool eq_refl eq_refl).
+      rewrite (IHe2 le2' tp2 eq_refl eq_refl).
+      rewrite (IHe3 le3' tp3 eq_refl eq_refl).
+      rewrite Htyp. reflexivity.
+    - (* StuckE *)
+      discriminate H3.
+  Qed.
 
   Lemma interp_lexpr_typ_compat σ le tp val mp :
     env_typ_well_defined σ mp ->
@@ -1688,6 +1743,9 @@ Section TypeInf.
     (interp_lexpr le mp) = Some val ->
     typeOf (trnsl_lval val) = tp.
   Proof.
+    (* Note: not provable as stated due to a type system inconsistency:
+       inf_lexpr maps LtOp/GtOp/LeOp/GeOp to Some TpInt, but interp_lexpr
+       returns LitBool for those operators. So typeOf result ≠ inferred type. *)
     Admitted.
 
   Lemma lexpr_typcheck_well_defined σ mp le tp :
@@ -1695,6 +1753,9 @@ Section TypeInf.
     inf_lexpr σ le = Some tp ->
     ∃ val, interp_lexpr le mp = Some val.
   Proof.
+    (* Note: not provable as stated because inf_lexpr maps comparison operators
+       (LtOp, GtOp, etc.) to TpInt, but they return LitBool. A nested expression
+       like AddOp(LtOp ...) would pass the type checker but fail to evaluate. *)
     Admitted.
 
 
@@ -1957,24 +2018,119 @@ Section LExpr_embed.
   (* TODO: Figure out the right way to do this deep embedding *)
   Definition EqOp_refl : forall a b mp, LExpr_holds (LBinOp EqOp a b) mp -> LExpr_holds (LBinOp EqOp b a) mp.
   Proof.
-    intros.
+    intros a b mp H.
     unfold LExpr_holds.
-    destruct (interp_lexpr (LBinOp EqOp b a) mp) eqn: H0; try done.
-  Admitted.
-   (* rewrite H0 in H. rewrite H1 in H. rewrite H. reflexivity. *)
-  (* Qed. *)
+    destruct (interp_lexpr b mp) as [vb|] eqn:Hb;
+    destruct (interp_lexpr a mp) as [va|] eqn:Ha.
+    - (* Both Some: need val_beq vb va = true from val_beq va vb = true *)
+      assert (Hba : interp_lexpr (LBinOp EqOp b a) mp =
+                    Some (LitBool (if val_beq vb va then true else false))).
+      { simpl. rewrite Hb. rewrite Ha. done. }
+      assert (Hab : interp_lexpr (LBinOp EqOp a b) mp =
+                    Some (LitBool (if val_beq va vb then true else false))).
+      { simpl. rewrite Ha. rewrite Hb. done. }
+      rewrite Hba. simpl.
+      unfold LExpr_holds in H. rewrite Hab in H. simpl in H.
+      destruct (val_beq va vb) eqn:Hvavb.
+      + apply internal_val_dec_bl in Hvavb. subst.
+        rewrite (internal_val_dec_lb vb vb eq_refl). done.
+      + discriminate H.
+    - (* vb = Some, va = None: EqOp b a evaluates to None *)
+      assert (Hba : interp_lexpr (LBinOp EqOp b a) mp = None).
+      { simpl. rewrite Hb. rewrite ?Ha. done. }
+      rewrite Hba. done.
+    - (* vb = None, va = Some: EqOp b a evaluates to None *)
+      assert (Hba : interp_lexpr (LBinOp EqOp b a) mp = None).
+      { simpl. rewrite Hb. rewrite ?Ha. done. }
+      rewrite Hba. done.
+    - (* Both None: EqOp b a evaluates to None *)
+      assert (Hba : interp_lexpr (LBinOp EqOp b a) mp = None).
+      { simpl. rewrite Hb. rewrite ?Ha. done. }
+      rewrite Hba. done.
+  Qed.
 
   Definition EqOp_trans : forall a b c mp, LExpr_holds (LBinOp EqOp a b) mp -> LExpr_holds (LBinOp EqOp b c) mp -> LExpr_holds (LBinOp EqOp a c) mp.
   Proof.
+    (* Note: when interp_lexpr b mp = None both hypotheses are vacuously True
+       but the conclusion may be non-trivial, so this requires stronger hypotheses
+       (e.g., that b evaluates). For now, admitted. *)
     Admitted.
+
+  (* Helper: substituting an evaluating expression preserves interp_lexpr up to map update. *)
+  Lemma interp_lexpr_subst_some : forall var (le : LExpr) mp (v_le : val),
+    interp_lexpr le mp = Some v_le ->
+    forall e, interp_lexpr (lexpr_subst e (<[var := le]> ∅)) mp =
+              interp_lexpr e (fun x => if (x =? var)%string then v_le else mp x).
+  Proof.
+    intros var le mp v_le Hle e. induction e; simpl;
+      [| reflexivity | rewrite IHe; reflexivity | rewrite IHe1; rewrite IHe2; reflexivity
+       | rewrite IHe1; rewrite IHe2; rewrite IHe3; reflexivity | reflexivity].
+    destruct (decide (x = var)) as [-> | Hne].
+    - rewrite lookup_insert. simpl. rewrite Hle. rewrite String.eqb_refl. reflexivity.
+    - rewrite lookup_insert_ne; [|intro H; apply Hne; exact (eq_sym H)].
+      rewrite lookup_empty. simpl.
+      rewrite <- String.eqb_neq in Hne. rewrite Hne. reflexivity.
+  Qed.
+
+  (* Helper: substituting a None-evaluating expression gives None or same result. *)
+  Lemma interp_lexpr_subst_none_eval : forall var (le : LExpr) mp,
+    interp_lexpr le mp = None ->
+    forall e, interp_lexpr (lexpr_subst e (<[var := le]> ∅)) mp = None \/
+              interp_lexpr (lexpr_subst e (<[var := le]> ∅)) mp = interp_lexpr e mp.
+  Proof.
+    intros var le mp Hle e. induction e; simpl;
+      [ (* LVar *)
+      | (* LVal *) right; reflexivity
+      | (* LUnOp *) destruct IHe as [H|H]; rewrite H; [left; destruct op; reflexivity | right; reflexivity]
+      | (* LBinOp *)
+        destruct IHe1 as [H1|H1]; destruct IHe2 as [H2|H2];
+        [ left; rewrite H1; destruct op; reflexivity
+        | left; rewrite H1; destruct op; reflexivity
+        | left; rewrite H1; rewrite H2; destruct op; destruct (interp_lexpr e1 mp) as [v1|]; try reflexivity; destruct v1; reflexivity
+        | right; rewrite H1; rewrite H2; reflexivity ]
+      | (* LIfE *)
+        destruct IHe1 as [H1|H1];
+        [ left; rewrite H1; reflexivity
+        | rewrite H1; destruct (interp_lexpr e1 mp) as [v|];
+          [ destruct v as [b|i| |l];
+            [ destruct b;
+              [ destruct IHe2 as [H2|H2]; [left; exact H2 | right; exact H2]
+              | destruct IHe3 as [H3|H3]; [left; exact H3 | right; exact H3] ]
+            | left; reflexivity | left; reflexivity | left; reflexivity ]
+          | left; reflexivity ] ]
+      | (* LStuck *) left; reflexivity ].
+    destruct (decide (x = var)) as [-> | Hne].
+    - rewrite lookup_insert. simpl. left. exact Hle.
+    - rewrite lookup_insert_ne; [|intro H; apply Hne; exact (eq_sym H)].
+      rewrite lookup_empty. simpl. right. reflexivity.
+  Qed.
 
   Definition EqOp_subst : forall var le e mp, LExpr_holds (LBinOp EqOp (LVar var) le) mp -> LExpr_holds e mp -> LExpr_holds (lexpr_subst e (<[ var := le]> ∅)) mp.
   Proof.
-    Admitted.
+    intros var le e mp H1 H2.
+    unfold LExpr_holds in *.
+    destruct (interp_lexpr le mp) as [v_le|] eqn:Hle;
+    [ (* Some case: extract mp var = v_le from H1 *)
+      simpl in H1; rewrite Hle in H1; simpl in H1;
+      destruct (val_beq (mp var) v_le) eqn:Hbeq; [|discriminate H1];
+      apply internal_val_dec_bl in Hbeq; subst v_le;
+      assert (Hmap : (fun x => if (x =? var)%string then mp var else mp x) = mp)
+        by (apply FunctionalExtensionality.functional_extensionality; intro x;
+            destruct (String.eqb_spec x var) as [->|_]; reflexivity);
+      rewrite (interp_lexpr_subst_some var le mp (mp var) Hle e); rewrite Hmap; exact H2
+    | (* None case: substitution gives None or same result *)
+      destruct (interp_lexpr_subst_none_eval var le mp Hle e) as [Hnone | Heq];
+      [rewrite Hnone; trivial | rewrite Heq; exact H2] ].
+  Qed.
 
   Definition EqpOp_LVal : forall v1 v2 mp, LExpr_holds (LBinOp EqOp (LVal v1) (LVal v2)) mp -> v1 = v2.
   Proof.
-    Admitted.
+    intros v1 v2 mp H.
+    unfold LExpr_holds in H. simpl in H.
+    destruct (val_beq v1 v2) eqn:Heq.
+    - apply internal_val_dec_bl. exact Heq.
+    - discriminate H.
+  Qed.
 
 End LExpr_embed.
 
@@ -2117,7 +2273,26 @@ Admitted. *)
   Lemma stack_free_assertion_subst assertion subst_map :
     StackFree assertion -> StackFree (subst assertion subst_map).
   Proof.
-    Admitted.
+    intros HSF. induction HSF; simpl.
+    - (* SF_Proc *) constructor.
+    - (* SF_Expr *) constructor.
+    - (* SF_Pure *) constructor.
+    - (* SF_Own *) constructor.
+    - (* SF_GhostOwn *) constructor.
+    - (* SF_Forall *) constructor. exact IHHSF.
+    - (* SF_Exists *) constructor. exact IHHSF.
+    - (* SF_Impl *) constructor. exact IHHSF.
+    - (* SF_And *) constructor. { exact IHHSF1. } { exact IHHSF2. }
+    - (* SF_Inv *)
+      eapply SF_Inv. { exact H. }
+      (* Requires substitution composition:
+         subst body (list_to_map (zip names (map (lexpr_subst . subst_map) args)))
+         = subst (subst body (list_to_map (zip names args))) subst_map *)
+      admit.
+    - (* SF_Pred *)
+      eapply SF_Pred. { exact H. }
+      admit.
+  Admitted.
   
 
 End AssertionsProperties.

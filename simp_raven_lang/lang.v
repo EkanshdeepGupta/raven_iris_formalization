@@ -148,16 +148,13 @@ Definition update_frame_lvar (frame : stack_frame) (x : var) (v : val) : stack_f
   StackFrame (<[x := v]> frame.(locals)) .
 
 Definition update_lvar (σ : state) (x : var) (stk_id : stack_id) (v : val) : state :=
-  let s := σ.(stack) in
-  let s := 
-    match s !! stk_id with
-    | None => s
-    | Some stk_frm =>
-      let new_stk_frame := update_frame_lvar stk_frm x v in
-      (<[stk_id := new_stk_frame]> s) 
-    end
-  in
-  State σ.(global_heap) σ.(procs) σ.(stack) σ.(max_stack_id).
+  match σ.(stack) !! stk_id with
+  | None => σ
+  | Some stk_frm =>
+    State σ.(global_heap) σ.(procs)
+      (<[stk_id := update_frame_lvar stk_frm x v]> σ.(stack))
+      σ.(max_stack_id)
+  end.
 
 Definition lookup_lvar (σ : state) (x : var) (stk_id : stack_id) : option val :=
   match σ.(stack) !! stk_id with
