@@ -1593,9 +1593,15 @@ Section TypeInf.
     | _ => None
     end
 
-  | BinOp (AddOp | SubOp | MulOp | DivOp | ModOp | LtOp | GtOp | LeOp | GeOp) e1 e2 =>
+  | BinOp (AddOp | SubOp | MulOp | DivOp | ModOp) e1 e2 =>
     match inf_expr ρ e1, inf_expr ρ e2 with
     | Some TpInt, Some TpInt => Some TpInt
+    | _, _ => None
+    end
+
+  | BinOp (LtOp | GtOp | LeOp | GeOp) e1 e2 =>
+    match inf_expr ρ e1, inf_expr ρ e2 with
+    | Some TpInt, Some TpInt => Some TpBool
     | _, _ => None
     end
 
@@ -1636,9 +1642,15 @@ Section TypeInf.
     | _ => None
     end
 
-  | LBinOp (AddOp | SubOp | MulOp | DivOp | ModOp | LtOp | GtOp | LeOp | GeOp) e1 e2 =>
+  | LBinOp (AddOp | SubOp | MulOp | DivOp | ModOp) e1 e2 =>
     match inf_lexpr σ e1, inf_lexpr σ e2 with
     | Some TpInt, Some TpInt => Some TpInt
+    | _, _ => None
+    end
+
+  | LBinOp (LtOp | GtOp | LeOp | GeOp) e1 e2 =>
+    match inf_lexpr σ e1, inf_lexpr σ e2 with
+    | Some TpInt, Some TpInt => Some TpBool
     | _, _ => None
     end
 
@@ -1737,26 +1749,103 @@ Section TypeInf.
       discriminate H3.
   Qed.
 
+  (* Combined lemma: a well-typed expression always evaluates and the result has
+     the inferred type. Proved by structural induction; both corollaries follow. *)
+  Local Lemma interp_lexpr_well_typed σ le mp tp :
+    env_typ_well_defined σ mp →
+    inf_lexpr σ le = Some tp →
+    ∃ val, interp_lexpr le mp = Some val ∧ typeOf (trnsl_lval val) = tp.
+  Proof.
+    intros Hwf. revert tp.
+    induction le; intros tp Hinf; simpl in *.
+    - (* LVar x *)
+      injection Hinf as <-. exists (mp x). split; [done|].
+      specialize (Hwf x).
+      destruct (σ x), (mp x); simpl in *; try contradiction; done.
+    - (* LVal v *)
+      injection Hinf as <-. eauto.
+    - (* LUnOp *)
+      destruct op.
+      + (* NotBoolOp *)
+        destruct (inf_lexpr σ le) as [[]|]; try discriminate Hinf.
+        injection Hinf as <-.
+        destruct (IHle TpBool eq_refl) as (v & Hv & Htyp).
+        destruct v; simpl in Htyp; try discriminate Htyp.
+        eexists. rewrite Hv. split; done.
+      + (* NegOp *)
+        destruct (inf_lexpr σ le) as [[]|]; try discriminate Hinf.
+        injection Hinf as <-.
+        destruct (IHle TpInt eq_refl) as (v & Hv & Htyp).
+        destruct v; simpl in Htyp; try discriminate Htyp.
+        eexists. rewrite Hv. split; done.
+    - (* LBinOp: arithmetic/comparison (TpInt × TpInt) and boolean (TpBool × TpBool) share structure *)
+      destruct op; simpl in Hinf;
+      (* AddOp | SubOp | MulOp | DivOp | ModOp | LtOp | GtOp | LeOp | GeOp:
+         both subexprs must be TpInt; note after simpl the IH sees the reduced value *)
+      try (
+        destruct (inf_lexpr σ le1) as [[]|]; try discriminate Hinf;
+        destruct (inf_lexpr σ le2) as [[]|]; try discriminate Hinf;
+        injection Hinf as <-;
+        destruct (IHle1 TpInt eq_refl) as (v1 & Hv1 & Htyp1);
+        destruct (IHle2 TpInt eq_refl) as (v2 & Hv2 & Htyp2);
+        destruct v1; simpl in Htyp1; try discriminate Htyp1;
+        destruct v2; simpl in Htyp2; try discriminate Htyp2;
+        eexists; rewrite Hv1 Hv2; split; done);
+      (* EqOp | NeOp: subexprs must have the same (any) type *)
+      try (
+        destruct (inf_lexpr σ le1) as [tp1|]; try discriminate Hinf;
+        destruct (inf_lexpr σ le2) as [tp2|]; try discriminate Hinf;
+        destruct (typ_beq tp1 tp2); try discriminate Hinf;
+        injection Hinf as <-;
+        destruct (IHle1 tp1 eq_refl) as (v1 & Hv1 & _);
+        destruct (IHle2 tp2 eq_refl) as (v2 & Hv2 & _);
+        eexists; rewrite Hv1 Hv2; split; done);
+      (* AndOp | OrOp: both subexprs must be TpBool *)
+      try (
+        destruct (inf_lexpr σ le1) as [[]|]; try discriminate Hinf;
+        destruct (inf_lexpr σ le2) as [[]|]; try discriminate Hinf;
+        injection Hinf as <-;
+        destruct (IHle1 TpBool eq_refl) as (v1 & Hv1 & Htyp1);
+        destruct (IHle2 TpBool eq_refl) as (v2 & Hv2 & Htyp2);
+        destruct v1; simpl in Htyp1; try discriminate Htyp1;
+        destruct v2; simpl in Htyp2; try discriminate Htyp2;
+        eexists; rewrite Hv1 Hv2; split; done).
+    - (* LIfE *)
+      destruct (inf_lexpr σ le1) as [[]|]; try discriminate Hinf.
+      destruct (inf_lexpr σ le2) as [tp2|] eqn:He2; try discriminate Hinf.
+      destruct (inf_lexpr σ le3) as [tp3|] eqn:He3; try discriminate Hinf.
+      destruct (typ_beq tp2 tp3) eqn:Hbeq; try discriminate Hinf.
+      injection Hinf as <-.
+      apply internal_typ_dec_bl in Hbeq. subst tp3.
+      destruct (IHle1 TpBool eq_refl) as (v1 & Hv1 & Htyp1).
+      destruct v1; simpl in Htyp1; try discriminate Htyp1.
+      rewrite Hv1. destruct b.
+      + exact (IHle2 tp2 eq_refl).
+      + exact (IHle3 tp2 eq_refl).
+    - (* LStuck *)
+      discriminate Hinf.
+  Qed.
+
   Lemma interp_lexpr_typ_compat σ le tp val mp :
     env_typ_well_defined σ mp ->
     inf_lexpr σ le = Some tp ->
     (interp_lexpr le mp) = Some val ->
     typeOf (trnsl_lval val) = tp.
   Proof.
-    (* Note: not provable as stated due to a type system inconsistency:
-       inf_lexpr maps LtOp/GtOp/LeOp/GeOp to Some TpInt, but interp_lexpr
-       returns LitBool for those operators. So typeOf result ≠ inferred type. *)
-    Admitted.
+    intros Hwf Hinf Heval.
+    destruct (interp_lexpr_well_typed σ le mp tp Hwf Hinf) as (val' & Hval' & Htyp).
+    rewrite Hval' in Heval. injection Heval as <-. exact Htyp.
+  Qed.
 
   Lemma lexpr_typcheck_well_defined σ mp le tp :
     env_typ_well_defined σ mp ->
     inf_lexpr σ le = Some tp ->
     ∃ val, interp_lexpr le mp = Some val.
   Proof.
-    (* Note: not provable as stated because inf_lexpr maps comparison operators
-       (LtOp, GtOp, etc.) to TpInt, but they return LitBool. A nested expression
-       like AddOp(LtOp ...) would pass the type checker but fail to evaluate. *)
-    Admitted.
+    intros Hwf Hinf.
+    destruct (interp_lexpr_well_typed σ le mp tp Hwf Hinf) as (val & Hval & _).
+    eauto.
+  Qed.
 
 
 End TypeInf.
