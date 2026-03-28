@@ -279,10 +279,8 @@ Definition bin_op_eval (op : bin_op) (v1 v2 : val) : option val :=
   | AddOp, LitInt i1, LitInt i2 => Some (LitInt (i1 + i2))
   | SubOp, LitInt i1, LitInt i2 => Some (LitInt (i1 - i2))
   | MulOp, LitInt i1, LitInt i2 => Some (LitInt (i1 * i2))
-  | DivOp, LitInt i1, LitInt i2 => 
-      if (i2 =? 0)%Z then None else Some (LitInt (i1 / i2))
-  | ModOp, LitInt i1, LitInt i2 =>
-      if (i2 =? 0)%Z then None else Some (LitInt (i1 mod i2))
+  | DivOp, LitInt i1, LitInt i2 => Some (LitInt (i1 / i2))
+  | ModOp, LitInt i1, LitInt i2 => Some (LitInt (i1 mod i2))
   | EqOp, v1, v2 => Some (LitBool (bool_decide (v1 = v2)))
   | NeOp, v1, v2 => Some (LitBool (bool_decide (v1 ≠ v2)))
   | LtOp, LitInt i1, LitInt i2 => Some (LitBool (Z.ltb i1 i2))
@@ -315,7 +313,15 @@ Inductive expr_step : expr → stack_frame → expr → Prop :=
     expr_step (IfE (Val v) e1 e2) stk_frame (e1)
 | IfEFalseStep stk_frame v e1 e2 :
     v = (LitBool false) ->
-    expr_step (IfE (Val v) e1 e2) stk_frame (e2).
+    expr_step (IfE (Val v) e1 e2) stk_frame (e2)
+| IfETrueEvalStep stk_frame e1 e2 e3 v2 :
+    expr_step e1 stk_frame (Val (LitBool true)) ->
+    expr_step e2 stk_frame (Val v2) ->
+    expr_step (IfE e1 e2 e3) stk_frame (Val v2)
+| IfEFalseEvalStep stk_frame e1 e2 e3 v3 :
+    expr_step e1 stk_frame (Val (LitBool false)) ->
+    expr_step e3 stk_frame (Val v3) ->
+    expr_step (IfE e1 e2 e3) stk_frame (Val v3).
 
 Inductive runtime_step : runtime_stmt → state → list Empty_set → runtime_stmt → state → list runtime_stmt → Prop :=
 | RTIfTStep σ stk_id stk_frm e s1 s2 s_next σ' efs:
@@ -528,25 +534,60 @@ Proof.
     assert (Hr : v2 = v3) by (eapply IHe2; eassumption).
     subst. congruence.
 
-  - (* IfE e_cond e_then e_else:
-       ExprRefl is ruled out (IfE _ _ _ ≠ Val _).
-       A Val output can only arise when the condition is already
-       fully evaluated:
-         IfETrueStep  (cond = LitBool true,  output = e_then = Val vA)
-         IfEFalseStep (cond = LitBool false, output = e_else = Val vA)
-       After inverting H1, we invert H2.  Cross-branch cases
-       (one true, one false) are contradicted by
-         LitBool true = LitBool false (discriminate).
-       Same-branch cases give the same output expression, so vA = vB. *)
+  - (* IfE e1 e2 e3:
+       Possible Val-producing rules: IfETrueStep, IfEFalseStep,
+       IfETrueEvalStep, IfEFalseEvalStep.
+       Cross-branch cases are contradicted by IHe1 (condition uniqueness).
+       Same-branch cases use the IH on the chosen branch. *)
     inversion H1; subst.
-    + (* H1 used IfETrueStep *)
+    + (* H1: IfETrueStep — e1 = Val (LitBool true), e2 = Val vA *)
       inversion H2; subst.
-      * reflexivity.  (* H2 also IfETrueStep: same output *)
-      * discriminate. (* H2 used IfEFalseStep: true ≠ false *)
-    + (* H1 used IfEFalseStep *)
+      * reflexivity.
+      * discriminate.
+      * (* IfETrueEvalStep: expr_step e2 frm (Val vB) *)
+        eapply IHe2; [apply ExprRefl | eassumption].
+      * (* IfEFalseEvalStep: expr_step (Val (LitBool true)) frm (Val (LitBool false)) *)
+        exfalso.
+        assert (LitBool true = LitBool false) by (eapply IHe1; [apply ExprRefl | eassumption]).
+        discriminate.
+    + (* H1: IfEFalseStep — e1 = Val (LitBool false), e3 = Val vA *)
       inversion H2; subst.
-      * discriminate. (* H2 used IfETrueStep: false ≠ true *)
-      * reflexivity.  (* H2 also IfEFalseStep: same output *)
+      * discriminate.
+      * reflexivity.
+      * (* IfETrueEvalStep: expr_step (Val (LitBool false)) frm (Val (LitBool true)) *)
+        exfalso.
+        assert (LitBool false = LitBool true) by (eapply IHe1; [apply ExprRefl | eassumption]).
+        discriminate.
+      * (* IfEFalseEvalStep: expr_step e3 frm (Val vB) *)
+        eapply IHe3; [apply ExprRefl | eassumption].
+    + (* H1: IfETrueEvalStep — eval e1 → true, eval e2 → vA *)
+      inversion H2; subst.
+      * (* IfETrueStep: e1 = Val true, e2 = Val vB *)
+        eapply IHe2; [eassumption | apply ExprRefl].
+      * (* IfEFalseStep: e1 = Val false, contradicts true *)
+        exfalso.
+        assert (LitBool true = LitBool false) by (eapply IHe1; [eassumption | apply ExprRefl]).
+        discriminate.
+      * (* IfETrueEvalStep *)
+        eapply IHe2; eassumption.
+      * (* IfEFalseEvalStep: condition evaluates to both true and false *)
+        exfalso.
+        assert (LitBool true = LitBool false) by (eapply IHe1; eassumption).
+        discriminate.
+    + (* H1: IfEFalseEvalStep — eval e1 → false, eval e3 → vA *)
+      inversion H2; subst.
+      * (* IfETrueStep: e1 = Val true, contradicts false *)
+        exfalso.
+        assert (LitBool false = LitBool true) by (eapply IHe1; [eassumption | apply ExprRefl]).
+        discriminate.
+      * (* IfEFalseStep: e1 = Val false, e3 = Val vB *)
+        eapply IHe3; [eassumption | apply ExprRefl].
+      * (* IfETrueEvalStep: condition evaluates to both false and true *)
+        exfalso.
+        assert (LitBool false = LitBool true) by (eapply IHe1; eassumption).
+        discriminate.
+      * (* IfEFalseEvalStep *)
+        eapply IHe3; eassumption.
 
   - (* StuckE: ExprRefl would require StuckE = Val vA, a contradiction.
        Rocq resolves this automatically on inversion. *)

@@ -340,14 +340,9 @@ Section updates.
         (λ (acc : lang.state) (f_v : fld_name * lang.val), update_heap acc l f_v.1 f_v.2)
         [] σ0)). *)
       
-      simpl in σ'. subst σ'. unfold to_heapUR. rewrite fmap_empty. apply  auth_update_alloc. unfold ε. 
-        set (hp1 := (λ v : lang.val, to_heap_cellR v) <$> global_heap σ : gmapUR heap_addr heap_cellR).
-        assert (hp1 = ε ⋅ hp1 ) as H0. { admit. }
-        rewrite -> H0 at 2.
-        assert ((∅ : gmapUR heap_addr heap_cellR) = ε ⋅ (∅ : gmapUR heap_addr heap_cellR)) as H1. { admit. }
-        rewrite H1.
-      apply (op_local_update_discrete hp1 ε ∅).
-      intros. simpl. rewrite left_id. done.
+      simpl in σ'. subst σ'. unfold to_heapUR. rewrite fmap_empty. apply auth_update_alloc.
+      have Heq : ucmra_unit heapUR = (∅ : gmapUR heap_addr heap_cellR). { done. }
+      rewrite Heq. done.
 
       - intros σ l σ' fs_heap_map. simpl in fs_heap_map.
        simpl in σ'.

@@ -107,7 +107,7 @@ Fixpoint interp_lexpr (le : LExpr) (mp : symb_map) : option val :=
       end
     | NegOp =>
       match interp_lexpr e mp with
-      | Some (LitInt i) => Some (LitInt (-1 * i))
+      | Some (LitInt i) => Some (LitInt (-i))
       | _ => None
       end
     end
@@ -146,37 +146,37 @@ Fixpoint interp_lexpr (le : LExpr) (mp : symb_map) : option val :=
 
     | EqOp =>
       match interp_lexpr e1 mp, interp_lexpr e2 mp with
-      | Some v1, Some v2 => Some (LitBool (if val_beq v1 v2 then true else false))
+      | Some v1, Some v2 => Some (LitBool (val_beq v1 v2))
       | _, _ => None
       end
 
     | NeOp =>
       match interp_lexpr e1 mp, interp_lexpr e2 mp with
-      | Some v1, Some v2 => Some (LitBool (if val_beq v1 v2 then false else true))
+      | Some v1, Some v2 => Some (LitBool (negb (val_beq v1 v2)))
       | _, _ => None
       end
 
     | LtOp =>
       match interp_lexpr e1 mp, interp_lexpr e2 mp with
-      | Some (LitInt i1), Some (LitInt i2) => Some (LitBool (if Z.ltb i1 i2 then true else false))
+      | Some (LitInt i1), Some (LitInt i2) => Some (LitBool (Z.ltb i1 i2))
       | _, _ => None
       end
 
     | GtOp =>
       match interp_lexpr e1 mp, interp_lexpr e2 mp with
-      | Some (LitInt i1), Some (LitInt i2) => Some (LitBool (if Z.gtb i1 i2 then true else false))
+      | Some (LitInt i1), Some (LitInt i2) => Some (LitBool (Z.ltb i2 i1))
       | _, _ => None
       end
-    
+
     | LeOp =>
       match interp_lexpr e1 mp, interp_lexpr e2 mp with
-      | Some (LitInt i1), Some (LitInt i2) => Some (LitBool (if Z.leb i1 i2 then true else false))
+      | Some (LitInt i1), Some (LitInt i2) => Some (LitBool (Z.leb i1 i2))
       | _, _ => None
       end
-      
+
     | GeOp =>
       match interp_lexpr e1 mp, interp_lexpr e2 mp with
-      | Some (LitInt i1), Some (LitInt i2) => Some (LitBool (if Z.geb i1 i2 then true else false))
+      | Some (LitInt i1), Some (LitInt i2) => Some (LitBool (Z.leb i2 i1))
       | _, _ => None
       end
 
@@ -584,6 +584,25 @@ Section Translation.
     Proof.
       destruct y eqn:Hy; try simpl; try done.
       destruct l. simpl. done.
+    Qed.
+
+    (* Every rrl val v satisfies: trnsl_val (trnsl_lval v) = v *)
+    Lemma trnsl_val_trnsl_lval_inverse (v : val) : trnsl_val (trnsl_lval v) = v.
+    Proof.
+      destruct v; simpl; try done.
+      destruct l. simpl. done.
+    Qed.
+
+    (* val_beq and bool_decide agree modulo trnsl_lval *)
+    Lemma val_beq_bool_decide (v1 v2 : val) :
+      val_beq v1 v2 = bool_decide (trnsl_lval v1 = trnsl_lval v2).
+    Proof.
+      destruct (val_beq v1 v2) eqn:Hbeq.
+      - symmetry. apply bool_decide_true.
+        apply internal_val_dec_bl in Hbeq. rewrite Hbeq. done.
+      - symmetry. apply bool_decide_false.
+        intro Heq. apply trnsl_lval_injective in Heq.
+        apply internal_val_dec_lb in Heq. rewrite Heq in Hbeq. discriminate.
     Qed.
 
     Definition stack: Type := gmap lang.var lvar.
@@ -2113,10 +2132,10 @@ Section LExpr_embed.
     destruct (interp_lexpr a mp) as [va|] eqn:Ha.
     - (* Both Some: need val_beq vb va = true from val_beq va vb = true *)
       assert (Hba : interp_lexpr (LBinOp EqOp b a) mp =
-                    Some (LitBool (if val_beq vb va then true else false))).
+                    Some (LitBool (val_beq vb va))).
       { simpl. rewrite Hb. rewrite Ha. done. }
       assert (Hab : interp_lexpr (LBinOp EqOp a b) mp =
-                    Some (LitBool (if val_beq va vb then true else false))).
+                    Some (LitBool (val_beq va vb))).
       { simpl. rewrite Ha. rewrite Hb. done. }
       rewrite Hba. simpl.
       unfold LExpr_holds in H. rewrite Hab in H. simpl in H.

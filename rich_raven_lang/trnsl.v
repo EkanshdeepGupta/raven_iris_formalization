@@ -44,17 +44,199 @@ Section MainTranslation.
     Proof.
       Admitted.
 
-    Lemma trnsl_expr_interp_lexpr_compatibility stk e lexpr lv mp : 
-      trnsl_expr_lExpr stk e = Some (lexpr) -> 
-      interp_lexpr lexpr mp = Some lv -> 
+    Lemma trnsl_expr_interp_lexpr_compatibility stk e lexpr lv mp :
+      trnsl_expr_lExpr stk e = Some (lexpr) ->
+      interp_lexpr lexpr mp = Some lv ->
       expr_step e (symb_stk_to_stk_frm stk mp) (Val (trnsl_lval lv)).
-    Admitted.
+    Proof.
+      revert lexpr lv.
+      induction e; intros lexpr lv Htrnsl Hinterp; simpl in Htrnsl.
+      - (* Var x *)
+        destruct (stk !! x) as [lv_name|] eqn:Hlookup; [|discriminate].
+        injection Htrnsl as <-. simpl in Hinterp. injection Hinterp as <-.
+        apply VarStep. unfold symb_stk_to_stk_frm. simpl.
+        rewrite lookup_fmap. rewrite Hlookup. simpl. done.
+      - (* Val v *)
+        injection Htrnsl as <-. simpl in Hinterp. injection Hinterp as <-.
+        rewrite trnsl_lval_trnsl_val_inverse. apply ExprRefl.
+      - (* UnOp op e *)
+        destruct (trnsl_expr_lExpr stk e) as [le1|] eqn:Hle1; [|discriminate].
+        injection Htrnsl as <-.
+        destruct op; simpl in Hinterp.
+        + (* NotBoolOp *)
+          destruct (interp_lexpr le1 mp) as [[b|n| |l]|] eqn:Hv1; try discriminate.
+          injection Hinterp as <-.
+          apply UnOpStep with (v := lang.LitBool b).
+          * exact (IHe le1 (LitBool b) eq_refl Hv1).
+          * simpl. done.
+        + (* NegOp *)
+          destruct (interp_lexpr le1 mp) as [[b|i| |l]|] eqn:Hv1; try discriminate.
+          injection Hinterp as <-.
+          apply UnOpStep with (v := lang.LitInt i).
+          * exact (IHe le1 (LitInt i) eq_refl Hv1).
+          * simpl. done.
+      - (* BinOp op e1 e2 *)
+        destruct (trnsl_expr_lExpr stk e1) as [le1|] eqn:Hle1; [|discriminate].
+        destruct (trnsl_expr_lExpr stk e2) as [le2|] eqn:Hle2; [|discriminate].
+        injection Htrnsl as <-.
+        destruct op; simpl in Hinterp;
+          (* Integer arithmetic ops: AddOp, SubOp, MulOp, DivOp, ModOp *)
+          try (destruct (interp_lexpr le1 mp) as [[b1|i1| |l1]|] eqn:Hv1; try discriminate;
+               destruct (interp_lexpr le2 mp) as [[b2|i2| |l2]|] eqn:Hv2; try discriminate;
+               injection Hinterp as <-;
+               apply BinOpStep with (v1 := lang.LitInt i1) (v2 := lang.LitInt i2);
+               [ exact (IHe1 le1 (LitInt i1) eq_refl Hv1)
+               | exact (IHe2 le2 (LitInt i2) eq_refl Hv2)
+               | simpl; done ]);
+          (* Comparison ops: LtOp, GtOp, LeOp, GeOp — result is LitBool *)
+          try (destruct (interp_lexpr le1 mp) as [[b1|i1| |l1]|] eqn:Hv1; try discriminate;
+               destruct (interp_lexpr le2 mp) as [[b2|i2| |l2]|] eqn:Hv2; try discriminate;
+               injection Hinterp as <-;
+               apply BinOpStep with (v1 := lang.LitInt i1) (v2 := lang.LitInt i2);
+               [ exact (IHe1 le1 (LitInt i1) eq_refl Hv1)
+               | exact (IHe2 le2 (LitInt i2) eq_refl Hv2)
+               | simpl; done ]);
+          (* EqOp *)
+          try (destruct (interp_lexpr le1 mp) as [v1|] eqn:Hv1; try discriminate;
+               destruct (interp_lexpr le2 mp) as [v2|] eqn:Hv2; try discriminate;
+               injection Hinterp as <-;
+               apply BinOpStep with (v1 := trnsl_lval v1) (v2 := trnsl_lval v2);
+               [ exact (IHe1 le1 v1 eq_refl Hv1)
+               | exact (IHe2 le2 v2 eq_refl Hv2)
+               | simpl; rewrite <- val_beq_bool_decide; done ]);
+          (* NeOp *)
+          try (destruct (interp_lexpr le1 mp) as [v1|] eqn:Hv1; try discriminate;
+               destruct (interp_lexpr le2 mp) as [v2|] eqn:Hv2; try discriminate;
+               injection Hinterp as <-;
+               apply BinOpStep with (v1 := trnsl_lval v1) (v2 := trnsl_lval v2);
+               [ exact (IHe1 le1 v1 eq_refl Hv1)
+               | exact (IHe2 le2 v2 eq_refl Hv2)
+               | simpl; rewrite bool_decide_not; rewrite <- val_beq_bool_decide; done ]);
+          (* Boolean ops: AndOp, OrOp *)
+          try (destruct (interp_lexpr le1 mp) as [[b1|n1| |l1]|] eqn:Hv1; try discriminate;
+               destruct (interp_lexpr le2 mp) as [[b2|n2| |l2]|] eqn:Hv2; try discriminate;
+               injection Hinterp as <-;
+               apply BinOpStep with (v1 := lang.LitBool b1) (v2 := lang.LitBool b2);
+               [ exact (IHe1 le1 (LitBool b1) eq_refl Hv1)
+               | exact (IHe2 le2 (LitBool b2) eq_refl Hv2)
+               | simpl; done ]).
+      - (* IfE e1 e2 e3 *)
+        destruct (trnsl_expr_lExpr stk e1) as [le1|] eqn:Hle1; [|discriminate].
+        destruct (trnsl_expr_lExpr stk e2) as [le2|] eqn:Hle2; [|discriminate].
+        destruct (trnsl_expr_lExpr stk e3) as [le3|] eqn:Hle3; [|discriminate].
+        injection Htrnsl as <-.
+        simpl in Hinterp.
+        destruct (interp_lexpr le1 mp) as [[b|n| |l]|] eqn:Hcond; try discriminate.
+        (* only LitBool b remains; now case split on the boolean *)
+        destruct b; simpl in Hinterp.
+        + (* condition = true *)
+          apply IfETrueEvalStep.
+          * exact (IHe1 le1 (LitBool true) eq_refl Hcond).
+          * exact (IHe2 le2 lv eq_refl Hinterp).
+        + (* condition = false *)
+          apply IfEFalseEvalStep.
+          * exact (IHe1 le1 (LitBool false) eq_refl Hcond).
+          * exact (IHe3 le3 lv eq_refl Hinterp).
+      - (* StuckE *)
+        injection Htrnsl as <-. simpl in Hinterp. discriminate.
+    Qed.
 
-    Lemma trnsl_expr_interp_lexpr_compatibility2 stk e lexpr lv mp : 
-      trnsl_expr_lExpr stk e = Some (lexpr) -> 
+    Lemma trnsl_expr_interp_lexpr_compatibility2 stk e lexpr lv mp :
+      trnsl_expr_lExpr stk e = Some (lexpr) ->
       expr_step e (symb_stk_to_stk_frm stk mp) (Val (trnsl_lval lv)) ->
       interp_lexpr lexpr mp = Some lv.
-    Admitted.
+    Proof.
+      revert lexpr lv.
+      induction e; intros lexpr lv Htrnsl Hstep; simpl in Htrnsl.
+      - (* Var x *)
+        destruct (stk !! x) as [lv_name|] eqn:Hlookup; [|discriminate].
+        injection Htrnsl as <-. simpl.
+        inversion Hstep; subst.
+        unfold symb_stk_to_stk_frm in H2. simpl in H2.
+        rewrite lookup_fmap in H2. rewrite Hlookup in H2. simpl in H2.
+        injection H2 as H2. f_equal. exact (trnsl_lval_injective _ _ H2).
+      - (* Val v *)
+        injection Htrnsl as <-. simpl.
+        inversion Hstep; subst.
+        f_equal. exact (trnsl_val_trnsl_lval_inverse lv).
+      - (* UnOp op e *)
+        destruct (trnsl_expr_lExpr stk e) as [le1|] eqn:Hle1; [|discriminate].
+        injection Htrnsl as <-.
+        inversion Hstep; subst.
+        destruct op; simpl.
+        + (* NotBoolOp *)
+          simpl in H4. destruct v; try discriminate.
+          injection H4 as H4.
+          pose proof (IHe le1 (LitBool b) eq_refl H3) as Hle.
+          rewrite Hle. simpl. f_equal. exact (trnsl_lval_injective (LitBool (negb b)) lv H4).
+        + (* NegOp *)
+          simpl in H4. destruct v; try discriminate.
+          injection H4 as H4.
+          pose proof (IHe le1 (LitInt i) eq_refl H3) as Hle.
+          rewrite Hle. simpl. f_equal. exact (trnsl_lval_injective (LitInt (-i)) lv H4).
+      - (* BinOp op e1 e2 *)
+        destruct (trnsl_expr_lExpr stk e1) as [le1|] eqn:Hle1; [|discriminate].
+        destruct (trnsl_expr_lExpr stk e2) as [le2|] eqn:Hle2; [|discriminate].
+        injection Htrnsl as <-.
+        inversion Hstep; subst.
+        rewrite <- (trnsl_lval_trnsl_val_inverse v1) in H4.
+        rewrite <- (trnsl_lval_trnsl_val_inverse v2) in H5.
+        pose proof (IHe1 le1 (trnsl_val v1) eq_refl H4) as Hle1'.
+        pose proof (IHe2 le2 (trnsl_val v2) eq_refl H5) as Hle2'.
+        destruct op; simpl in *;
+          (* Group 1: arithmetic, comparison, bool ops *)
+          try (destruct v1; try discriminate; destruct v2; try discriminate;
+               injection H6 as H6;
+               symmetry in H6; apply (f_equal trnsl_val) in H6;
+               rewrite trnsl_val_trnsl_lval_inverse in H6; simpl in H6; subst lv;
+               simpl in Hle1', Hle2'; rewrite Hle1' Hle2'; simpl; done);
+          (* EqOp *)
+          try (injection H6 as H6;
+               symmetry in H6; apply (f_equal trnsl_val) in H6;
+               rewrite trnsl_val_trnsl_lval_inverse in H6; simpl in H6; subst lv;
+               rewrite Hle1' Hle2'; simpl; f_equal; f_equal;
+               rewrite val_beq_bool_decide;
+               rewrite trnsl_lval_trnsl_val_inverse; rewrite trnsl_lval_trnsl_val_inverse;
+               destruct (bool_decide (v1 = v2)); done);
+          (* NeOp *)
+          try (injection H6 as H6;
+               symmetry in H6; apply (f_equal trnsl_val) in H6;
+               rewrite trnsl_val_trnsl_lval_inverse in H6; simpl in H6; subst lv;
+               rewrite Hle1' Hle2'; simpl; f_equal; f_equal;
+               rewrite bool_decide_not; f_equal;
+               rewrite val_beq_bool_decide;
+               rewrite trnsl_lval_trnsl_val_inverse; rewrite trnsl_lval_trnsl_val_inverse;
+               destruct (bool_decide (v1 = v2)); done).
+      - (* IfE e1 e2 e3 *)
+        destruct (trnsl_expr_lExpr stk e1) as [le1|] eqn:Hle1; [|discriminate].
+        destruct (trnsl_expr_lExpr stk e2) as [le2|] eqn:Hle2; [|discriminate].
+        destruct (trnsl_expr_lExpr stk e3) as [le3|] eqn:Hle3; [|discriminate].
+        injection Htrnsl as <-.
+        simpl.
+        inversion Hstep; subst.
+        + (* IfETrueStep: e1 = Val (LitBool true), true branch = Val (trnsl_lval lv) *)
+          specialize (IHe1 le1 (LitBool true) eq_refl). specialize (IHe2 le2 lv eq_refl).
+          simpl in IHe1, IHe2.
+          pose proof (IHe1 (ExprRefl _ _)) as Hcond.
+          pose proof (IHe2 (ExprRefl _ _)) as Hbranch.
+          rewrite Hcond. exact Hbranch.
+        + (* IfEFalseStep: e1 = Val (LitBool false), false branch = Val (trnsl_lval lv) *)
+          specialize (IHe1 le1 (LitBool false) eq_refl). specialize (IHe3 le3 lv eq_refl).
+          simpl in IHe1, IHe3.
+          pose proof (IHe1 (ExprRefl _ _)) as Hcond.
+          pose proof (IHe3 (ExprRefl _ _)) as Hbranch.
+          rewrite Hcond. exact Hbranch.
+        + (* IfETrueEvalStep: eval e1 → LitBool true, eval e2 → lv *)
+          pose proof (IHe1 le1 (LitBool true) eq_refl H3) as Hcond.
+          pose proof (IHe2 le2 lv eq_refl H5) as Hbranch.
+          rewrite Hcond. exact Hbranch.
+        + (* IfEFalseEvalStep: eval e1 → LitBool false, eval e3 → lv *)
+          pose proof (IHe1 le1 (LitBool false) eq_refl H3) as Hcond.
+          pose proof (IHe3 le3 lv eq_refl H5) as Hbranch.
+          rewrite Hcond. exact Hbranch.
+      - (* StuckE *)
+        injection Htrnsl as <-. simpl. inversion Hstep.
+    Qed.
 
     Definition trnsl_hoare_triple (stk_id: stack_id) (p : assertion) (ι1: nat) (msk : maskAnnot) (cmd : stmt) (q : assertion) (ι2: nat) (mp : symb_map) : iProp rrl_lang.Σ :=
         match (trnsl_stmt cmd) with 
@@ -77,12 +259,41 @@ Section MainTranslation.
         end
     .
 
-    Lemma fresh_var_trnsl_expr_invariant stk lv e lexpr mp v0: 
-      fresh_lvar stk lv -> 
+    Lemma fresh_var_trnsl_expr_invariant stk lv e lexpr mp v0:
+      fresh_lvar stk lv ->
       trnsl_expr_lExpr stk e = Some lexpr ->
        interp_lexpr lexpr mp = interp_lexpr lexpr (λ x : lvar, if (x =? lv)%string then v0 else mp x).
     Proof.
-      Admitted. 
+      intros Hfresh Htrnsl.
+      revert lexpr Htrnsl.
+      induction e; intros lexpr Htrnsl; simpl in Htrnsl.
+      - (* Var x: lexpr = LVar (stk !! x) *)
+        destruct (stk !! x) as [lv_name|] eqn:Hlookup; [|discriminate].
+        injection Htrnsl as <-. simpl.
+        (* lv_name ≠ lv because fresh_lvar stk lv *)
+        assert (lv_name ≠ lv) as Hneq.
+        { intro Heq. subst lv_name. exact (Hfresh x Hlookup). }
+        rewrite <- String.eqb_neq in Hneq. rewrite Hneq. done.
+      - (* Val v: lexpr = LVal (trnsl_val v) *)
+        injection Htrnsl as <-. simpl. done.
+      - (* UnOp op e *)
+        destruct (trnsl_expr_lExpr stk e) as [le1|] eqn:Hle1; [|discriminate].
+        injection Htrnsl as <-. simpl.
+        rewrite (IHe le1 eq_refl). done.
+      - (* BinOp op e1 e2 *)
+        destruct (trnsl_expr_lExpr stk e1) as [le1|] eqn:Hle1; [|discriminate].
+        destruct (trnsl_expr_lExpr stk e2) as [le2|] eqn:Hle2; [|discriminate].
+        injection Htrnsl as <-. simpl.
+        rewrite (IHe1 le1 eq_refl) (IHe2 le2 eq_refl). done.
+      - (* IfE e1 e2 e3 *)
+        destruct (trnsl_expr_lExpr stk e1) as [le1|] eqn:Hle1; [|discriminate].
+        destruct (trnsl_expr_lExpr stk e2) as [le2|] eqn:Hle2; [|discriminate].
+        destruct (trnsl_expr_lExpr stk e3) as [le3|] eqn:Hle3; [|discriminate].
+        injection Htrnsl as <-. simpl.
+        rewrite (IHe1 le1 eq_refl) (IHe2 le2 eq_refl) (IHe3 le3 eq_refl). done.
+      - (* StuckE *)
+        injection Htrnsl as <-. simpl. done.
+    Qed.
 
     Lemma lexpr_holds_interp_compat lexpr v1 mp v:
       LExpr_holds (LBinOp EqOp lexpr (LVal v1)) mp ->
@@ -134,9 +345,9 @@ Section MainTranslation.
       rewrite val_beq_refl in Hfalse. discriminate.
     Qed.
 
-    Lemma expr_interp_well_defined stk e mp lexpr: 
-      trnsl_expr_lExpr stk e = Some lexpr -> 
-      interp_lexpr lexpr mp = None -> 
+    Lemma expr_interp_well_defined stk e mp lexpr:
+      trnsl_expr_lExpr stk e = Some lexpr ->
+      interp_lexpr lexpr mp = None ->
       not (expr_well_defined e).
     Admitted.
 

@@ -1,3 +1,7 @@
+
+# General Guidelines
+- Do NOT ever make Git commits. 
+
 # Rocq/Iris Verification Rules
 
 - **Verify Proof State:** After writing 2-3 tactics, always use the `rocq-mcp` tool to check the current goals and ensure no errors are present.
