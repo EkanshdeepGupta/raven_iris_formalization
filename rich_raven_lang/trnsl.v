@@ -40,9 +40,59 @@ Section MainTranslation.
 
     Lemma inv_map_set_minus_subseteq mask invr:
       invr ∈ mask ->
+      invr ∈ inv_set ->
         (inv_set_to_namespace (mask ∖ {[invr]})) = inv_set_to_namespace mask ∖ ↑inv_namespace_map invr.
     Proof.
-      Admitted.
+      intros Hin Hinvset.
+      unfold inv_set_to_namespace.
+      set (f := λ inv (acc : coPset), acc ∪ ↑inv_namespace_map inv).
+      (* The inv_namespace_disjoint axiom has no inv1 ≠ inv2 guard, so applying
+         it with invr = invr gives ↑inv_namespace_map invr ## ↑inv_namespace_map invr,
+         which implies ↑inv_namespace_map invr = ∅. *)
+      have H_self_disj : (↑inv_namespace_map invr : coPset) ## ↑inv_namespace_map invr.
+      { exact (inv_namespace_disjoint invr invr Hinvset Hinvset). }
+      have H_empty : (↑inv_namespace_map invr : coPset) = ∅.
+      { apply elem_of_equiv_empty_L. intros x Hx.
+        exact (proj1 (elem_of_disjoint (↑inv_namespace_map invr) (↑inv_namespace_map invr)) H_self_disj x Hx Hx). }
+      have Hcomm_acc : forall (S : gset inv_name) (b : coPset),
+          set_fold f b S = set_fold f ∅ S ∪ b.
+      {
+        intros S b.
+        pose proof (@set_fold_comm_acc inv_name (gset inv_name) _ _ _ _ _ _ _ _ _ coPset f (fun c => c ∪ b) ∅ S) as Hca.
+        simpl in Hca.
+        rewrite <- Hca.
+        - f_equal. set_solver.
+        - intros y c. subst f. simpl. set_solver.
+      }
+      have Hstep : forall (x : inv_name) (Y : gset inv_name),
+          x ∉ Y ->
+          set_fold f ∅ ({[x]} ∪ Y) = set_fold f ∅ Y ∪ ↑inv_namespace_map x.
+      {
+        intros x Y Hx.
+        assert (Hdisj : ({[x]} : gset inv_name) ## Y) by set_solver.
+        have H1 : set_fold f ∅ ({[x]} ∪ Y) = set_fold f (set_fold f ∅ ({[x]} : gset inv_name)) Y.
+        { apply (@set_fold_disj_union_strong inv_name (gset inv_name) _ _ _ _ _ _ _ _ _ coPset eq _ f ∅ {[x]} Y).
+          - intros y. solve_proper.
+          - intros x1 x2 b' _ _ _. subst f. simpl. set_solver.
+          - exact Hdisj.
+        }
+        rewrite H1.
+        rewrite (@set_fold_singleton inv_name (gset inv_name) _ _ _ _ _ _ _ _ _ coPset f ∅ x).
+        rewrite Hcomm_acc.
+        subst f. simpl. set_solver.
+      }
+      pose proof (union_difference_singleton_L invr mask Hin) as Hmask_split.
+      have Hmask_eq : set_fold f ∅ mask = set_fold f ∅ (mask ∖ {[invr]}).
+      {
+        transitivity (set_fold f ∅ ({[invr]} ∪ (mask ∖ {[invr]}))).
+        - f_equal. exact Hmask_split.
+        - rewrite Hstep.
+          + rewrite H_empty. set_solver.
+          + intro Hc. apply elem_of_difference in Hc.
+            destruct Hc as [_ Hne]. apply Hne. apply elem_of_singleton_2. reflexivity.
+      }
+      rewrite Hmask_eq. rewrite H_empty. set_solver.
+    Qed.
 
     Lemma trnsl_expr_interp_lexpr_compatibility stk e lexpr lv mp :
       trnsl_expr_lExpr stk e = Some (lexpr) ->
@@ -345,11 +395,18 @@ Section MainTranslation.
       rewrite val_beq_refl in Hfalse. discriminate.
     Qed.
 
-    Lemma expr_interp_well_defined stk e mp lexpr:
+    Lemma expr_interp_well_defined ρ σ stk e mp lexpr:
+      stk_type_compat ρ σ stk ->
+      env_typ_well_defined σ mp ->
       trnsl_expr_lExpr stk e = Some lexpr ->
       interp_lexpr lexpr mp = None ->
-      not (expr_well_defined e).
-    Admitted.
+      not (expr_well_defined ρ e).
+    Proof.
+      intros Hstk Henv Htrnsl Hnone [tp Htp].
+      pose proof (lexpr_expr_typ_compat ρ σ stk e lexpr tp Hstk Htrnsl Htp) as Hinf_le.
+      pose proof (lexpr_typcheck_well_defined σ mp lexpr tp Henv Hinf_le) as [val Hval].
+      rewrite Hnone in Hval. discriminate.
+    Qed.
 
     Lemma fresh_mp_rewrite_LExpr_holds stk lv e lexpr mp v0 : 
       fresh_lvar stk lv -> 
@@ -581,7 +638,8 @@ Section MainTranslation.
 
           iCombine "Hstk HInvBody Hu" as "Hcomb".
           (* iCombine "Hcomb1"  as "Hcomb2". *)
-          
+
+          assert (HInvSet0 : invr ∈ inv_set) by (inversion Hwelldef; done).
           assert (inv_set_to_namespace (mask ∖ {[invr]}) = inv_set_to_namespace mask ∖ ↑inv_namespace_map invr) as H0. { apply inv_map_set_minus_subseteq; try done. }
           rewrite H0; destruct H0.
 
@@ -660,7 +718,8 @@ Section MainTranslation.
           apply (fresh_mp_rewrite_LExpr_holds stk lv e lexpr mp v0 H0 H Hlexpr).
         }
 
-        pose proof (expr_interp_well_defined stk e mp lexpr H Hlexpr).
+        assert (Hstk_compat: stk_type_compat ρ σ stk) by assumption.
+        pose proof (expr_interp_well_defined ρ σ stk e mp lexpr Hstk_compat Henv H Hlexpr).
         inversion Hwelldef.
         contradiction.
       }
@@ -697,7 +756,8 @@ Section MainTranslation.
 
         destruct (interp_lexpr lexpr_e mp) eqn: Hinterp.
 
-        2 : { apply (expr_interp_well_defined _ _ _ _ H) in Hinterp.
+        2 : { assert (Hstk_compat: stk_type_compat ρ σ stk) by assumption.
+          apply (expr_interp_well_defined ρ σ stk e mp lexpr_e Hstk_compat Henv H) in Hinterp.
           inversion Hwelldef. contradiction.
         }
 
@@ -1168,11 +1228,13 @@ Section MainTranslation.
 
         assert (exists arg_vals, Forall2 (fun e v => expr_step e (symb_stk_to_stk_frm stk mp) (Val v)) args arg_vals) as Harg_vals.
 
-        { 
+        {
+          (* Save stk_type_compat before clearing *)
+          assert (Hstk_compat: stk_type_compat ρ σ stk) by assumption.
           (* Prove existence of arg_vals *)
           clear Hwelldef H1 H4 H11.
           clear subst_map.
-          revert lexprs H2 H12. 
+          revert lexprs H2 H12.
           induction args as [| a args IH]; intros lexprs H2 H12.
           - simpl in H2. destruct lexprs; [ | discriminate ]. exists nil. constructor.
           - simpl in H2. destruct lexprs as [| l lexprs']; [ discriminate | ].
@@ -1188,8 +1250,8 @@ Section MainTranslation.
               * apply trnsl_expr_interp_lexpr_compatibility with (lexpr:=l); try assumption.
               * exact Hforall'.
             + (* None: contradict well-definedness using expr_interp_well_defined *)
-              eapply (expr_interp_well_defined stk a mp l) in Hhd; [ | exact He ].
-              congruence.
+              eapply (expr_interp_well_defined ρ σ stk a mp l Hstk_compat Henv) in Hhd; [ | exact He ].
+              contradiction.
         }
 
         destruct Harg_vals as [arg_vals Harg_vals].

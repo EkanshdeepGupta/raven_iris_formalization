@@ -204,11 +204,10 @@ Fixpoint interp_lexpr (le : LExpr) (mp : symb_map) : option val :=
   end.
 
 
-(* TODO: Fix this with a proper error state; at present returning True when le is malformed which is not sound. *)
 Definition LExpr_holds (le : LExpr) (mp : symb_map) : Prop :=
   match interp_lexpr le mp with
   | Some v => v = LitBool true
-  | None => True
+  | None => False
   end.
 
 Definition trnsl_val (v: lang.val) : val :=
@@ -447,90 +446,141 @@ Global Parameter proc_map : gmap proc_name ProcRecord.
 (* Axiom proc_map_set : dom proc_map = proc_set. *)
 Axiom proc_args_unique : map_Forall (λ proc proc_entry, NoDup (proc_args_of proc_entry).*1 ) proc_map.
 
-Axiom proc_spec_stack_free : 
+Axiom proc_spec_stack_free :
   map_Forall (λ proc proc_entry, StackFree (proc_precond_of proc_entry) /\ StackFree (proc_postcond_of proc_entry) ) proc_map.
 
 
-Inductive expr_well_defined : lang.expr -> Prop :=
-| Constr e :
-  expr_well_defined e.
+(* Type inference for expressions — placed here so expr_well_defined can use it. *)
+Definition typeOf (v: lang.val) : typ :=
+match v with
+| lang.LitBool _ => TpBool
+| lang.LitInt _ => TpInt
+| lang.LitUnit => TpUnit
+| lang.LitLoc _ => TpLoc
+end.
 
-Inductive stmt_well_defined : pvar_typs -> stmt -> Prop := 
+Fixpoint inf_expr (ρ: pvar_typs) (e: lang.expr) : option typ :=
+match e with
+| Var x => Some (ρ x)
+| Val v => Some (typeOf v)
+| UnOp NotBoolOp e =>
+  match inf_expr ρ e with
+  | Some TpBool => Some TpBool
+  | _ => None
+  end
+| UnOp NegOp e =>
+  match inf_expr ρ e with
+  | Some TpInt => Some TpInt
+  | _ => None
+  end
+| BinOp (AddOp | SubOp | MulOp | DivOp | ModOp) e1 e2 =>
+  match inf_expr ρ e1, inf_expr ρ e2 with
+  | Some TpInt, Some TpInt => Some TpInt
+  | _, _ => None
+  end
+| BinOp (LtOp | GtOp | LeOp | GeOp) e1 e2 =>
+  match inf_expr ρ e1, inf_expr ρ e2 with
+  | Some TpInt, Some TpInt => Some TpBool
+  | _, _ => None
+  end
+| BinOp (AndOp | OrOp) e1 e2 =>
+  match inf_expr ρ e1, inf_expr ρ e2 with
+  | Some TpBool, Some TpBool => Some TpBool
+  | _, _ => None
+  end
+| BinOp (EqOp | NeOp) e1 e2 =>
+  match inf_expr ρ e1, inf_expr ρ e2 with
+  | Some tp1, Some tp2 => if typ_beq tp1 tp2 then Some TpBool else None
+  | _, _ => None
+  end
+| IfE e1 e2 e3 =>
+  match inf_expr ρ e1, inf_expr ρ e2, inf_expr ρ e3 with
+  | Some TpBool, Some tp2, Some tp3 => if typ_beq tp2 tp3 then Some tp2 else None
+  | _, _, _ => None
+  end
+| _ => None
+end.
+
+(* An expression is well-defined under type context ρ iff type inference succeeds. *)
+Definition expr_well_defined (ρ : pvar_typs) (e : lang.expr) : Prop :=
+  ∃ tp, inf_expr ρ e = Some tp.
+
+Inductive stmt_well_defined : pvar_typs -> stmt -> Prop :=
 | SeqTp ρ s1 s2 :
   stmt_well_defined ρ s1 ->
   stmt_well_defined ρ s2 ->
   stmt_well_defined ρ (Seq s1 s2)
-(* | ReturnTp e : 
-    expr_well_defined e ->
+(* | ReturnTp e :
+    expr_well_defined ρ e ->
     stmt_well_defined (Return e) *)
-| IfSTp ρ e s1 s2 : 
-    expr_well_defined e -> 
+| IfSTp ρ e s1 s2 :
+    expr_well_defined ρ e ->
     stmt_well_defined ρ s1 ->
-    stmt_well_defined ρ s2 -> 
+    stmt_well_defined ρ s2 ->
     stmt_well_defined ρ (IfS e s1 s2)
-| AssignTp ρ v e: 
-    expr_well_defined e ->
+| AssignTp ρ v e:
+    expr_well_defined ρ e ->
     stmt_well_defined ρ (Assign v e)
-(* | FreeTp e: 
-    expr_well_defined e ->
+(* | FreeTp e:
+    expr_well_defined ρ e ->
     stmt_well_defined (Free e) *)
 | SkipSTp ρ : stmt_well_defined ρ (SkipS)
 | StuckSTp ρ : stmt_well_defined ρ (StuckS)
-(* | ExprSTp e: 
-    expr_well_defined e -> 
+(* | ExprSTp e:
+    expr_well_defined ρ e ->
     stmt_well_defined (ExprS e) *)
-| CallTp ρ v proc proc_entry args: 
-    proc ∈ proc_set -> 
+| CallTp ρ v proc proc_entry args:
+    proc ∈ proc_set ->
     proc_map !! proc = Some proc_entry ->
     length args = length (proc_args_of proc_entry) ->
-    (Forall (fun arg => expr_well_defined arg) args) ->
+    (Forall (fun arg => expr_well_defined ρ arg) args) ->
     stmt_well_defined ρ (Call v proc args)
-| FldWrTp ρ v fld e2: 
-    (fld ∈ fld_set) -> 
-    expr_well_defined e2 -> 
+| FldWrTp ρ v fld e2:
+    (fld ∈ fld_set) ->
+    expr_well_defined ρ e2 ->
     stmt_well_defined ρ (FldWr v fld e2)
-| FldRdTp ρ v e fld: 
+| FldRdTp ρ v e fld:
     fld ∈ fld_set ->
-    expr_well_defined e ->
+    expr_well_defined ρ e ->
     stmt_well_defined ρ (FldRd v e fld)
-| CASTp ρ v e1 fld e2 e3: 
+| CASTp ρ v e1 fld e2 e3:
     fld ∈ fld_set ->
-    expr_well_defined e1 ->
-    expr_well_defined e2 ->
-    expr_well_defined e3 ->
+    expr_well_defined ρ e1 ->
+    expr_well_defined ρ e2 ->
+    expr_well_defined ρ e3 ->
     stmt_well_defined ρ (CAS v e1 fld e2 e3)
-| AllocTp ρ v fs: 
+| AllocTp ρ v fs:
     Forall (fun fld_v => (fst fld_v) ∈ fld_set) fs ->
     stmt_well_defined ρ (Alloc v fs)
-| SpawnTp ρ proc args: 
+| SpawnTp ρ proc args:
     proc ∈ proc_set ->
-    Forall (fun arg => expr_well_defined arg) args ->
+    Forall (fun arg => expr_well_defined ρ arg) args ->
     stmt_well_defined ρ (Spawn proc args)
-| UnfoldPredTp ρ pred args : 
+| UnfoldPredTp ρ pred args :
     pred ∈ pred_set ->
-    Forall (fun arg => expr_well_defined arg) args ->
+    Forall (fun arg => expr_well_defined ρ arg) args ->
     stmt_well_defined ρ (UnfoldPred pred args)
-| FoldPredTp ρ pred args : 
+| FoldPredTp ρ pred args :
     pred ∈ pred_set ->
-    Forall (fun arg => expr_well_defined arg) args ->
+    Forall (fun arg => expr_well_defined ρ arg) args ->
     stmt_well_defined ρ (FoldPred pred args)
 | InvAccessBlockTp ρ inv args stmt:
     inv ∈ inv_set ->
-    Forall (fun arg => expr_well_defined arg) args ->
+    Forall (fun arg => expr_well_defined ρ arg) args ->
     stmt_well_defined ρ stmt ->
     stmt_well_defined ρ (InvAccessBlock inv args stmt)
 
-(* | UnfoldInvTp inv args : 
-    inv ∈ inv_set -> 
-    Forall (fun arg => expr_well_defined arg) args ->
-    stmt_well_defined (UnfoldInv inv args)
-| FoldInvTp inv args : 
+(* | UnfoldInvTp inv args :
     inv ∈ inv_set ->
-    Forall (fun arg => expr_well_defined arg) args ->
+    Forall (fun arg => expr_well_defined ρ arg) args ->
+    stmt_well_defined (UnfoldInv inv args)
+| FoldInvTp inv args :
+    inv ∈ inv_set ->
+    Forall (fun arg => expr_well_defined ρ arg) args ->
     stmt_well_defined (FoldInv inv args) *)
-| FpuTp ρ e fld RAPack old_val new_val : 
+| FpuTp ρ e fld RAPack old_val new_val :
     fld ∈ fld_set ->
-    expr_well_defined e ->
+    expr_well_defined ρ e ->
     stmt_well_defined ρ (Fpu e fld RAPack  old_val new_val)
 .
 
@@ -1587,64 +1637,7 @@ End Translation.
 Section TypeInf.
     Definition stk_type_compat (ρ : pvar_typs) (σ : lvar_typs) (stk : stack) := forall v lv, (stk !! v = Some lv) -> ρ v = σ lv.
 
-
-  Definition typeOf (v: lang.val) : typ := 
-  match v with
-  | lang.LitBool _ => TpBool
-  | lang.LitInt _ => TpInt
-  | lang.LitUnit => TpUnit
-  | lang.LitLoc _ => TpLoc
-  end.
-
-
-  Fixpoint inf_expr (ρ: pvar_typs) (e: lang.expr) : option typ :=
-  match e with
-  | Var x => Some (ρ x)
-  | Val v => Some (typeOf v)
-  | UnOp NotBoolOp e =>
-    match inf_expr ρ e with
-    | Some TpBool => Some TpBool
-    | _ => None
-    end
-  | UnOp NegOp e =>
-    match inf_expr ρ e with
-    | Some TpInt => Some TpInt
-    | _ => None
-    end
-
-  | BinOp (AddOp | SubOp | MulOp | DivOp | ModOp) e1 e2 =>
-    match inf_expr ρ e1, inf_expr ρ e2 with
-    | Some TpInt, Some TpInt => Some TpInt
-    | _, _ => None
-    end
-
-  | BinOp (LtOp | GtOp | LeOp | GeOp) e1 e2 =>
-    match inf_expr ρ e1, inf_expr ρ e2 with
-    | Some TpInt, Some TpInt => Some TpBool
-    | _, _ => None
-    end
-
-  | BinOp (AndOp | OrOp) e1 e2 =>
-    match inf_expr ρ e1, inf_expr ρ e2 with
-    | Some TpBool, Some TpBool => Some TpBool
-    | _, _ => None
-    end
-
-  | BinOp (EqOp | NeOp) e1 e2 =>
-    match inf_expr ρ e1, inf_expr ρ e2 with
-    | Some tp1, Some tp2 => if typ_beq tp1 tp2 then Some TpBool else None
-    | _, _ => None
-    end
-
-  | IfE e1 e2 e3 =>
-    match inf_expr ρ e1, inf_expr ρ e2, inf_expr ρ e3 with
-    | Some TpBool, Some tp2, Some tp3 => if typ_beq tp2 tp3 then Some tp2 else None
-    | _, _, _ => None
-    end
-
-  | _ => None
-  end.
-
+  (* typeOf and inf_expr are now defined globally above, before expr_well_defined. *)
 
   Fixpoint inf_lexpr (σ: lvar_typs) (le: LExpr) : option typ := 
   match le with
@@ -2143,26 +2136,52 @@ Section LExpr_embed.
       + apply internal_val_dec_bl in Hvavb. subst.
         rewrite (internal_val_dec_lb vb vb eq_refl). done.
       + discriminate H.
-    - (* vb = Some, va = None: EqOp b a evaluates to None *)
-      assert (Hba : interp_lexpr (LBinOp EqOp b a) mp = None).
-      { simpl. rewrite Hb. rewrite ?Ha. done. }
-      rewrite Hba. done.
-    - (* vb = None, va = Some: EqOp b a evaluates to None *)
-      assert (Hba : interp_lexpr (LBinOp EqOp b a) mp = None).
-      { simpl. rewrite Hb. rewrite ?Ha. done. }
-      rewrite Hba. done.
-    - (* Both None: EqOp b a evaluates to None *)
-      assert (Hba : interp_lexpr (LBinOp EqOp b a) mp = None).
-      { simpl. rewrite Hb. rewrite ?Ha. done. }
-      rewrite Hba. done.
+    - (* vb = Some, va = None: EqOp a b evaluates to None, H is False *)
+      assert (Hab_none : interp_lexpr (LBinOp EqOp a b) mp = None).
+      { simpl. rewrite Ha. done. }
+      unfold LExpr_holds in H. rewrite Hab_none in H. contradiction.
+    - (* vb = None, va = Some: EqOp a b evaluates to None, H is False *)
+      assert (Hab_none : interp_lexpr (LBinOp EqOp a b) mp = None).
+      { simpl. rewrite Ha. rewrite Hb. done. }
+      unfold LExpr_holds in H. rewrite Hab_none in H. contradiction.
+    - (* Both None: EqOp a b evaluates to None, H is False *)
+      assert (Hab_none : interp_lexpr (LBinOp EqOp a b) mp = None).
+      { simpl. rewrite Ha. done. }
+      unfold LExpr_holds in H. rewrite Hab_none in H. contradiction.
   Qed.
 
   Definition EqOp_trans : forall a b c mp, LExpr_holds (LBinOp EqOp a b) mp -> LExpr_holds (LBinOp EqOp b c) mp -> LExpr_holds (LBinOp EqOp a c) mp.
   Proof.
-    (* Note: when interp_lexpr b mp = None both hypotheses are vacuously True
-       but the conclusion may be non-trivial, so this requires stronger hypotheses
-       (e.g., that b evaluates). For now, admitted. *)
-    Admitted.
+    intros a b c mp Hab Hbc.
+    unfold LExpr_holds in *.
+    destruct (interp_lexpr b mp) as [vb|] eqn:Hb.
+    2: { (* b = None: Hab is False *)
+      assert (Hab_none : interp_lexpr (LBinOp EqOp a b) mp = None).
+      { simpl. rewrite Hb. destruct (interp_lexpr a mp); done. }
+      rewrite Hab_none in Hab. contradiction. }
+    destruct (interp_lexpr a mp) as [va|] eqn:Ha.
+    2: { assert (Hab_none : interp_lexpr (LBinOp EqOp a b) mp = None).
+      { simpl. rewrite Ha. done. }
+      rewrite Hab_none in Hab. contradiction. }
+    destruct (interp_lexpr c mp) as [vc|] eqn:Hc.
+    2: { assert (Hbc_none : interp_lexpr (LBinOp EqOp b c) mp = None).
+      { simpl. rewrite Hb. rewrite Hc. done. }
+      rewrite Hbc_none in Hbc. contradiction. }
+    (* All Some case *)
+    assert (Hab_eq : interp_lexpr (LBinOp EqOp a b) mp = Some (LitBool (val_beq va vb))).
+    { simpl. rewrite Ha. rewrite Hb. done. }
+    assert (Hbc_eq : interp_lexpr (LBinOp EqOp b c) mp = Some (LitBool (val_beq vb vc))).
+    { simpl. rewrite Hb. rewrite Hc. done. }
+    assert (Hac_eq : interp_lexpr (LBinOp EqOp a c) mp = Some (LitBool (val_beq va vc))).
+    { simpl. rewrite Ha. rewrite Hc. done. }
+    rewrite Hab_eq in Hab. simpl in Hab.
+    rewrite Hbc_eq in Hbc. simpl in Hbc.
+    rewrite Hac_eq. simpl.
+    injection Hab as Hab'. injection Hbc as Hbc'.
+    apply internal_val_dec_bl in Hab'. subst vb.
+    apply internal_val_dec_bl in Hbc'. subst vc.
+    rewrite (internal_val_dec_lb va va eq_refl). done.
+  Qed.
 
   (* Helper: substituting an evaluating expression preserves interp_lexpr up to map update. *)
   Lemma interp_lexpr_subst_some : forall var (le : LExpr) mp (v_le : val),
@@ -2217,18 +2236,19 @@ Section LExpr_embed.
   Proof.
     intros var le e mp H1 H2.
     unfold LExpr_holds in *.
-    destruct (interp_lexpr le mp) as [v_le|] eqn:Hle;
-    [ (* Some case: extract mp var = v_le from H1 *)
-      simpl in H1; rewrite Hle in H1; simpl in H1;
-      destruct (val_beq (mp var) v_le) eqn:Hbeq; [|discriminate H1];
-      apply internal_val_dec_bl in Hbeq; subst v_le;
+    destruct (interp_lexpr le mp) as [v_le|] eqn:Hle.
+    - (* Some case: extract mp var = v_le from H1 *)
+      simpl in H1; rewrite Hle in H1; simpl in H1.
+      destruct (val_beq (mp var) v_le) eqn:Hbeq; [|discriminate H1].
+      apply internal_val_dec_bl in Hbeq; subst v_le.
       assert (Hmap : (fun x => if (x =? var)%string then mp var else mp x) = mp)
         by (apply FunctionalExtensionality.functional_extensionality; intro x;
-            destruct (String.eqb_spec x var) as [->|_]; reflexivity);
-      rewrite (interp_lexpr_subst_some var le mp (mp var) Hle e); rewrite Hmap; exact H2
-    | (* None case: substitution gives None or same result *)
-      destruct (interp_lexpr_subst_none_eval var le mp Hle e) as [Hnone | Heq];
-      [rewrite Hnone; trivial | rewrite Heq; exact H2] ].
+            destruct (String.eqb_spec x var) as [->|_]; reflexivity).
+      rewrite (interp_lexpr_subst_some var le mp (mp var) Hle e); rewrite Hmap; exact H2.
+    - (* None case: H1 is False since LBinOp EqOp (LVar var) le evaluates to None *)
+      assert (H1_none : interp_lexpr (LBinOp EqOp (LVar var) le) mp = None).
+      { simpl. rewrite Hle. done. }
+      rewrite H1_none in H1. contradiction.
   Qed.
 
   Definition EqpOp_LVal : forall v1 v2 mp, LExpr_holds (LBinOp EqOp (LVal v1) (LVal v2)) mp -> v1 = v2.
