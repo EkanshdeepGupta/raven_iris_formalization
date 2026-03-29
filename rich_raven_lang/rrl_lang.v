@@ -350,6 +350,15 @@ Record InvRecord := Inv {
   inv_body: assertion;
 }.
 
+(* Well-formedness: the body only references its formal argument variables,
+   so substitution commutes with argument substitution. *)
+Definition InvBodyWF (r : InvRecord) : Prop :=
+  forall (args : list LExpr) (M : gmap var LExpr),
+    subst (r.(inv_body))
+      (list_to_map (zip (r.(inv_args)) (map (fun e => lexpr_subst e M) args))) =
+    subst (subst (r.(inv_body))
+      (list_to_map (zip (r.(inv_args)) args))) M.
+
 Global Parameter inv_map : gmap inv_name InvRecord.
 (* Axiom inv_map_set : dom inv_map = inv_set. *)
 
@@ -357,6 +366,14 @@ Record PredRecord := Pred {
   pred_args: list var;
   pred_body: assertion;
 }.
+
+(* Well-formedness: analogous condition for predicate bodies. *)
+Definition PredBodyWF (r : PredRecord) : Prop :=
+  forall (args : list LExpr) (M : gmap var LExpr),
+    subst (r.(pred_body))
+      (list_to_map (zip (r.(pred_args)) (map (fun e => lexpr_subst e M) args))) =
+    subst (subst (r.(pred_body))
+      (list_to_map (zip (r.(pred_args)) args))) M.
 
 Global Parameter pred_map : gmap pred_name PredRecord.
 (* Axiom pred_map_set : dom pred_map = pred_set. *)
@@ -2398,29 +2415,18 @@ Admitted. *)
   Admitted. *)
 
 
-  Lemma stack_free_assertion_subst assertion subst_map :
+  Lemma stack_free_assertion_subst
+    (Hinv_wf : forall inv r, inv_map !! inv = Some r -> InvBodyWF r)
+    (Hpred_wf : forall pred r, pred_map !! pred = Some r -> PredBodyWF r)
+    assertion subst_map :
     StackFree assertion -> StackFree (subst assertion subst_map).
   Proof.
-    intros HSF. induction HSF; simpl.
-    - (* SF_Proc *) constructor.
-    - (* SF_Expr *) constructor.
-    - (* SF_Pure *) constructor.
-    - (* SF_Own *) constructor.
-    - (* SF_GhostOwn *) constructor.
-    - (* SF_Forall *) constructor. exact IHHSF.
-    - (* SF_Exists *) constructor. exact IHHSF.
-    - (* SF_Impl *) constructor. exact IHHSF.
-    - (* SF_And *) constructor. { exact IHHSF1. } { exact IHHSF2. }
-    - (* SF_Inv *)
-      eapply SF_Inv. { exact H. }
-      (* Requires substitution composition:
-         subst body (list_to_map (zip names (map (lexpr_subst . subst_map) args)))
-         = subst (subst body (list_to_map (zip names args))) subst_map *)
-      admit.
-    - (* SF_Pred *)
-      eapply SF_Pred. { exact H. }
-      admit.
-  Admitted.
+    intros HSF. induction HSF; simpl; try constructor; try assumption.
+    - (* SF_Inv *) eapply SF_Inv. { exact H. }
+      rewrite (Hinv_wf _ _ H). exact IHHSF.
+    - (* SF_Pred *) eapply SF_Pred. { exact H. }
+      rewrite (Hpred_wf _ _ H). exact IHHSF.
+  Qed.
   
 
 End AssertionsProperties.

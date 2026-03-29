@@ -498,8 +498,10 @@ Section MainTranslation.
       unfold transport. revert Hupd.
     (* usually trivial by proper instance or f_equiv *) Admitted. *)
 
-    Theorem rrl_validity ρ σ ι1 ι2 stk_id p msk cmd q :
-      stmt_well_defined ρ cmd -> 
+    Theorem rrl_validity ρ σ ι1 ι2 stk_id p msk cmd q
+      (inv_map_wf : map_Forall (λ _ r, InvBodyWF r) inv_map)
+      (pred_map_wf : map_Forall (λ _ r, PredBodyWF r) pred_map) :
+      stmt_well_defined ρ cmd ->
       forall mp, (env_typ_well_defined σ mp) ->
        ⌜RavenHoareTriple ρ σ p ι1 cmd msk q ι2⌝
       ⊢  (trnsl_hoare_triple stk_id p ι1 msk cmd q ι2 mp).
@@ -1326,9 +1328,9 @@ Section MainTranslation.
           assert (trnsl_assertion (subst proc_pre subst_map') stk_id mp = proc_frame_pre ) as Hproc_frame_pre.
           { subst proc_frame_pre. done. }
 
-          rewrite (stack_free_assertion_trnsl (subst proc_pre subst_map') stk_id stk_id' mp) in Hproc_frame_pre. 2 : { apply stack_free_assertion_subst. destruct Hspec_StackFree; done. }
+          rewrite (stack_free_assertion_trnsl (subst proc_pre subst_map') stk_id stk_id' mp) in Hproc_frame_pre. 2 : { apply (stack_free_assertion_subst inv_map_wf pred_map_wf). destruct Hspec_StackFree; done. }
 
-          rewrite (stack_free_assertion_trnsl (subst proc_post (<["#ret_val":=LVal (trnsl_val ret_val)]> subst_map')) stk_id stk_id' mp) in Hproc_frame_post. 2 : { apply stack_free_assertion_subst. destruct Hspec_StackFree; done. }
+          rewrite (stack_free_assertion_trnsl (subst proc_post (<["#ret_val":=LVal (trnsl_val ret_val)]> subst_map')) stk_id stk_id' mp) in Hproc_frame_post. 2 : { apply (stack_free_assertion_subst inv_map_wf pred_map_wf). destruct Hspec_StackFree; done. }
 
           pose proof (Hproc Hproc_frame_pre Hproc_frame_post) as Hproc.
 
@@ -1348,7 +1350,7 @@ Section MainTranslation.
           iApply (Hproc with "[Hstk Hu1]").
 
           { 
-            rewrite (stack_free_assertion_trnsl (subst proc_pre subst_map') stk_id' stk_id mp) in Hproc_frame_pre. 2 : { apply stack_free_assertion_subst. destruct Hspec_StackFree as [Hpre_stack_free _]. done. }
+            rewrite (stack_free_assertion_trnsl (subst proc_pre subst_map') stk_id' stk_id mp) in Hproc_frame_pre. 2 : { apply (stack_free_assertion_subst inv_map_wf pred_map_wf). destruct Hspec_StackFree as [Hpre_stack_free _]. done. }
 
             iFrame.
 
@@ -1430,9 +1432,9 @@ Section MainTranslation.
 
           simpl in HlocalsDef. pose proof (Hproc HlocalsDef) as Hproc.
 
-          rewrite (stack_free_assertion_trnsl (subst proc_pre subst_map') stk_id stk_id' mp) in Hproc_frame_pre. 2 : { apply stack_free_assertion_subst. destruct Hspec_StackFree; done. }
+          rewrite (stack_free_assertion_trnsl (subst proc_pre subst_map') stk_id stk_id' mp) in Hproc_frame_pre. 2 : { apply (stack_free_assertion_subst inv_map_wf pred_map_wf). destruct Hspec_StackFree; done. }
 
-          rewrite (stack_free_assertion_trnsl (subst proc_post (<["#ret_val":=LVal (trnsl_val ret_val)]> subst_map')) stk_id stk_id' mp) in Hproc_frame_post. 2 : { apply stack_free_assertion_subst. destruct Hspec_StackFree; done. }
+          rewrite (stack_free_assertion_trnsl (subst proc_post (<["#ret_val":=LVal (trnsl_val ret_val)]> subst_map')) stk_id stk_id' mp) in Hproc_frame_post. 2 : { apply (stack_free_assertion_subst inv_map_wf pred_map_wf). destruct Hspec_StackFree; done. }
 
           pose proof (Hproc Hproc_frame_pre Hproc_frame_post) as Hproc.
 
@@ -1451,7 +1453,7 @@ Section MainTranslation.
           iApply (Hproc with "[Hstk Hu1]").
 
           { 
-            rewrite (stack_free_assertion_trnsl (subst proc_pre subst_map') stk_id' stk_id mp) in Hproc_frame_pre. 2 : { apply stack_free_assertion_subst. destruct Hspec_StackFree as [Hpre_stack_free _]. done. }
+            rewrite (stack_free_assertion_trnsl (subst proc_pre subst_map') stk_id' stk_id mp) in Hproc_frame_pre. 2 : { apply (stack_free_assertion_subst inv_map_wf pred_map_wf). destruct Hspec_StackFree as [Hpre_stack_free _]. done. }
 
 
             iFrame.
