@@ -485,8 +485,8 @@ Section MainTranslation.
 
       let subst_map' := list_to_map (zip (proc_args_of proc_record).*1 (map (λ val, LVal (trnsl_val val)) stk_vals)) in
 
-      trnsl_assertion (subst (proc_precond_of proc_record) subst_map') stk_id mp = precond ->
-      trnsl_assertion (subst (proc_postcond_of proc_record) (<["#ret_val" := LVal (trnsl_val (ret_val))]> subst_map')) stk_id mp = postcond ->
+      trnsl_assertion (subst (proc_precond_of proc_record) subst_map') stk_id mp ≡ precond ->
+      trnsl_assertion (subst (proc_postcond_of proc_record) (<["#ret_val" := LVal (trnsl_val (ret_val))]> subst_map')) stk_id mp ≡ postcond ->
       
       ((trnsl_stmt (proc_body_of proc_record) = Some' stmt) \/ (trnsl_stmt (proc_body_of proc_record) = None' /\ stmt = lang.SkipS) ) ->
       (∃ stk_frm'',
@@ -1279,8 +1279,8 @@ Section MainTranslation.
 
         set (trnsl_assertion (subst proc_pre subst_map) stk_id mp) as u1.
 
-        assert (trnsl_assertion (subst proc_pre subst_map) stk_id mp = u1) as Hproc_pre.
-            { subst u1; done. }
+        assert (trnsl_assertion (subst proc_pre subst_map) stk_id mp ≡ u1) as Hproc_pre.
+            { subst u1; reflexivity. }
 
         destruct (trnsl_stmt (proc_body)) eqn:Hproc_body;  try discriminate.
 
@@ -1300,12 +1300,12 @@ Section MainTranslation.
           set (trnsl_assertion (subst proc_post (<["#ret_val":=LVal (trnsl_val ret_val)]> subst_map')) stk_id mp) as proc_frame_post.
 
 
-          assert ( trnsl_assertion (subst proc_post (<["#ret_val":=LVal (trnsl_val ret_val)]> subst_map')) stk_id mp = proc_frame_post) as Hproc_frame_post.
-          { subst proc_frame_post. done. }
+          assert ( trnsl_assertion (subst proc_post (<["#ret_val":=LVal (trnsl_val ret_val)]> subst_map')) stk_id mp ≡ proc_frame_post) as Hproc_frame_post.
+          { subst proc_frame_post. reflexivity. }
 
         iApply (wp_call _ _ _ _ _ _ _ (lang.Proc proc_name proc_args proc_locals _) _ u1 proc_frame_post with "[] [Hstk Hproc_tbl Hu1]"); try iFrame; try done.
 
-          { 
+          {
             (* Showing procedure contract holds *)
             iIntros (stk_id' stk_frm') "%HlocalsDef". simpl in *.
 
@@ -1313,10 +1313,10 @@ Section MainTranslation.
 
             assert ((∀ v : var * typ, v ∈ proc_args_of (Proc proc_args proc_locals proc_pre proc_post proc_body) → is_Some (locals stk_frm' !! v.1))) as HIsSome.
 
-            { 
+            {
               intros v Hin. apply elem_of_list_lookup_1 in Hin as [i Hi].
               assert (proc_args.*1 !! i = Some v.1) as Hi'.
-              { rewrite list_lookup_fmap. rewrite Hi. done.   } 
+              { rewrite list_lookup_fmap. rewrite Hi. done.   }
               simpl in HlocalsDef.
               eapply (Forall2_lookup_l _ proc_args.*1 arg_vals i v.1 HlocalsDef) in Hi' as [val [Hval Hlookup]]. by eexists.
             }
@@ -1325,35 +1325,40 @@ Section MainTranslation.
 
           simpl in HlocalsDef. pose proof (Hproc HlocalsDef) as Hproc.
 
-          assert (trnsl_assertion (subst proc_pre subst_map') stk_id mp = proc_frame_pre ) as Hproc_frame_pre.
-          { subst proc_frame_pre. done. }
+          assert (trnsl_assertion (subst proc_pre subst_map') stk_id mp ≡ proc_frame_pre) as Hproc_frame_pre.
+          { subst proc_frame_pre. reflexivity. }
 
-          rewrite (stack_free_assertion_trnsl (subst proc_pre subst_map') stk_id stk_id' mp) in Hproc_frame_pre. 2 : { apply (stack_free_assertion_subst inv_map_wf pred_map_wf). destruct Hspec_StackFree; done. }
+          have Hproc_frame_pre' : trnsl_assertion (subst proc_pre subst_map') stk_id' mp ≡ proc_frame_pre.
+          { etransitivity.
+            - symmetry. apply (stack_free_assertion_trnsl _ stk_id stk_id' mp).
+              apply (stack_free_assertion_subst inv_map_wf pred_map_wf). destruct Hspec_StackFree; done.
+            - exact Hproc_frame_pre. }
 
-          rewrite (stack_free_assertion_trnsl (subst proc_post (<["#ret_val":=LVal (trnsl_val ret_val)]> subst_map')) stk_id stk_id' mp) in Hproc_frame_post. 2 : { apply (stack_free_assertion_subst inv_map_wf pred_map_wf). destruct Hspec_StackFree; done. }
+          have Hproc_frame_post' : trnsl_assertion (subst proc_post (<["#ret_val":=LVal (trnsl_val ret_val)]> subst_map')) stk_id' mp ≡ proc_frame_post.
+          { etransitivity.
+            - symmetry. apply (stack_free_assertion_trnsl _ stk_id stk_id' mp).
+              apply (stack_free_assertion_subst inv_map_wf pred_map_wf). destruct Hspec_StackFree; done.
+            - exact Hproc_frame_post. }
 
-          pose proof (Hproc Hproc_frame_pre Hproc_frame_post) as Hproc.
+          pose proof (Hproc Hproc_frame_pre' Hproc_frame_post') as Hproc.
 
           assert (trnsl_stmt proc_body = Some' lang.SkipS
             ∨ trnsl_stmt proc_body = None' ∧ lang.SkipS = lang.SkipS) as Hproc_body'. { right. split; try done. }
-          
+
           pose proof (Hproc Hproc_body') as Hproc.
 
           destruct Hproc as [stk_frm'' Hproc].
 
           iExists stk_frm''.
-          
+
           iIntros (Φ'). iModIntro.
-          iIntros "[Hstk Hu1] HΦ". 
+          iIntros "[Hstk Hu1] HΦ".
           instantiate (1 := lang.SkipS).
 
           iApply (Hproc with "[Hstk Hu1]").
 
-          { 
-            rewrite (stack_free_assertion_trnsl (subst proc_pre subst_map') stk_id' stk_id mp) in Hproc_frame_pre. 2 : { apply (stack_free_assertion_subst inv_map_wf pred_map_wf). destruct Hspec_StackFree as [Hpre_stack_free _]. done. }
-
+          {
             iFrame.
-
 
             pose proof (trnsl_assertion_w_lexpr_subst proc_pre lexprs proc_args.*1 arg_vals stk_id mp u1 proc_frame_pre Hlexprs_arg_vals Hproc_pre Hproc_frame_pre) as Himpl.
             iApply Himpl. iFrame.
@@ -1373,8 +1378,8 @@ Section MainTranslation.
             (λ x0 : lvar, if (x0 =? lvar_x)%string then trnsl_val ret_val else mp x0)) as u.
 
             assert ((trnsl_assertion (subst proc_post (<["#ret_var":=LVar lvar_x]> subst_map)) stk_id
-            (λ x0 : lvar, if (x0 =? lvar_x)%string then trnsl_val ret_val else mp x0)) = u) as Hpost.
-            { subst u; done. }
+            (λ x0 : lvar, if (x0 =? lvar_x)%string then trnsl_val ret_val else mp x0)) ≡ u) as Hpost.
+            { subst u; reflexivity. }
 
             
             iSplitR "Hq". 
@@ -1405,14 +1410,14 @@ Section MainTranslation.
         set (subst_map' := @list_to_map var LExpr (gmap var LExpr) _ _ (zip (proc_args).*1 (map (λ val, LVal (trnsl_val val)) arg_vals))).
 
           set (trnsl_assertion (subst proc_pre subst_map') stk_id mp) as proc_frame_pre.
-          assert ((trnsl_assertion (subst proc_pre subst_map') stk_id mp) = proc_frame_pre) as Hproc_frame_pre. { subst proc_frame_pre; done. }
+          assert ((trnsl_assertion (subst proc_pre subst_map') stk_id mp) ≡ proc_frame_pre) as Hproc_frame_pre. { subst proc_frame_pre; reflexivity. }
 
           set (trnsl_assertion (subst proc_post (<["#ret_val":=LVal (trnsl_val ret_val)]> subst_map')) stk_id mp) as proc_frame_post.
-          assert ((trnsl_assertion (subst proc_post (<["#ret_val":=LVal (trnsl_val ret_val)]> subst_map')) stk_id mp) = proc_frame_post) as Hproc_frame_post. { subst proc_frame_post; done. }
+          assert ((trnsl_assertion (subst proc_post (<["#ret_val":=LVal (trnsl_val ret_val)]> subst_map')) stk_id mp) ≡ proc_frame_post) as Hproc_frame_post. { subst proc_frame_post; reflexivity. }
 
         iApply (wp_call _ _ _ _ _ _ _ (lang.Proc proc_name proc_args proc_locals _) _ u1 proc_frame_post with "[] [Hstk Hproc_tbl Hu1]"); try iFrame; try done.
 
-          { 
+          {
             (* Showing procedure contract holds *)
             iIntros (stk_id' stk_frm') "%HlocalsDef". simpl in *.
 
@@ -1420,10 +1425,10 @@ Section MainTranslation.
 
             assert ((∀ v : var * typ, v ∈ proc_args_of (Proc proc_args proc_locals proc_pre proc_post proc_body) → is_Some (locals stk_frm' !! v.1))) as HIsSome.
 
-            { 
+            {
               intros v Hin. apply elem_of_list_lookup_1 in Hin as [i Hi].
               assert (proc_args.*1 !! i = Some v.1) as Hi'.
-              { rewrite list_lookup_fmap. rewrite Hi. done.   } 
+              { rewrite list_lookup_fmap. rewrite Hi. done.   }
               simpl in HlocalsDef.
               eapply (Forall2_lookup_l _ proc_args.*1 arg_vals i v.1 HlocalsDef) in Hi' as [val [Hval Hlookup]]. by eexists.
             }
@@ -1432,30 +1437,35 @@ Section MainTranslation.
 
           simpl in HlocalsDef. pose proof (Hproc HlocalsDef) as Hproc.
 
-          rewrite (stack_free_assertion_trnsl (subst proc_pre subst_map') stk_id stk_id' mp) in Hproc_frame_pre. 2 : { apply (stack_free_assertion_subst inv_map_wf pred_map_wf). destruct Hspec_StackFree; done. }
+          have Hproc_frame_pre' : trnsl_assertion (subst proc_pre subst_map') stk_id' mp ≡ proc_frame_pre.
+          { etransitivity.
+            - symmetry. apply (stack_free_assertion_trnsl _ stk_id stk_id' mp).
+              apply (stack_free_assertion_subst inv_map_wf pred_map_wf). destruct Hspec_StackFree; done.
+            - exact Hproc_frame_pre. }
 
-          rewrite (stack_free_assertion_trnsl (subst proc_post (<["#ret_val":=LVal (trnsl_val ret_val)]> subst_map')) stk_id stk_id' mp) in Hproc_frame_post. 2 : { apply (stack_free_assertion_subst inv_map_wf pred_map_wf). destruct Hspec_StackFree; done. }
+          have Hproc_frame_post' : trnsl_assertion (subst proc_post (<["#ret_val":=LVal (trnsl_val ret_val)]> subst_map')) stk_id' mp ≡ proc_frame_post.
+          { etransitivity.
+            - symmetry. apply (stack_free_assertion_trnsl _ stk_id stk_id' mp).
+              apply (stack_free_assertion_subst inv_map_wf pred_map_wf). destruct Hspec_StackFree; done.
+            - exact Hproc_frame_post. }
 
-          pose proof (Hproc Hproc_frame_pre Hproc_frame_post) as Hproc.
+          pose proof (Hproc Hproc_frame_pre' Hproc_frame_post') as Hproc.
 
           assert (trnsl_stmt proc_body = Some' s0
             ∨ trnsl_stmt proc_body = None' ∧ s0 = lang.SkipS) as Hproc_body'. { left. try done. }
-          
+
           pose proof (Hproc Hproc_body') as Hproc.
 
           destruct Hproc as [stk_frm'' Hproc].
 
           iExists stk_frm''.
-          
+
           iIntros (Φ'). iModIntro.
           iIntros "[Hstk Hu1] HΦ".
 
           iApply (Hproc with "[Hstk Hu1]").
 
-          { 
-            rewrite (stack_free_assertion_trnsl (subst proc_pre subst_map') stk_id' stk_id mp) in Hproc_frame_pre. 2 : { apply (stack_free_assertion_subst inv_map_wf pred_map_wf). destruct Hspec_StackFree as [Hpre_stack_free _]. done. }
-
-
+          {
             iFrame.
             pose proof (trnsl_assertion_w_lexpr_subst proc_pre lexprs proc_args.*1 arg_vals stk_id mp u1 proc_frame_pre Hlexprs_arg_vals Hproc_pre Hproc_frame_pre) as Himpl.
             iApply Himpl. iFrame.
@@ -1475,7 +1485,7 @@ Section MainTranslation.
             set (trnsl_assertion (subst proc_post (<["#ret_var":=LVar lvar_x]> subst_map)) stk_id
             (λ x0 : lvar, if (x0 =? lvar_x)%string then trnsl_val ret_val else mp x0)) as u.
             assert ((trnsl_assertion (subst proc_post (<["#ret_var":=LVar lvar_x]> subst_map)) stk_id
-            (λ x0 : lvar, if (x0 =? lvar_x)%string then trnsl_val ret_val else mp x0)) = u) as Hpost. {subst u; done. }
+            (λ x0 : lvar, if (x0 =? lvar_x)%string then trnsl_val ret_val else mp x0)) ≡ u) as Hpost. { subst u; reflexivity. }
             
             iSplitR "Hq". 
             { rewrite fresh_mp_rewrite_symb_stk_to_stk_frm_compat; try done. rewrite trnsl_lval_trnsl_val_inverse. iFrame. } 

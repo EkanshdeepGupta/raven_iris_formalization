@@ -2289,17 +2289,17 @@ Section AssertionsProperties.
   ) lexprs arg_vals ->
 
   (trnsl_assertion (subst assertion (list_to_map
-    (zip args 
+    (zip args
       lexprs
     )
-  )) stk_id mp) = p1 ->
+  )) stk_id mp) ≡ p1 ->
 
   (trnsl_assertion (subst assertion (list_to_map
-    (zip args 
+    (zip args
       (map (λ val : lang.val, LVal (trnsl_val val)) arg_vals)
     )
-  )) stk_id mp ) = p2
-  
+  )) stk_id mp ) ≡ p2
+
   -> (p1 -∗ p2).
   Proof. 
     Admitted.
@@ -2312,18 +2312,18 @@ Section AssertionsProperties.
   ) lexprs arg_vals ->
 
   (trnsl_assertion (subst assertion (<["#ret_var":=LVar lvar_x]>(list_to_map
-    (zip args 
+    (zip args
       lexprs
     )
   ))) stk_id (λ x0 : lvar, if (x0 =? lvar_x)%string then trnsl_val ret_val else
-  mp x0)) = p1 ->
+  mp x0)) ≡ p1 ->
 
   (trnsl_assertion (subst assertion (<["#ret_val":=LVal (trnsl_val ret_val)]>(list_to_map
-    (zip args 
+    (zip args
       (map (λ val : lang.val, LVal (trnsl_val val)) arg_vals)
     )
-  ))) stk_id mp ) = p2
-  
+  ))) stk_id mp ) ≡ p2
+
   -> (p2 -∗ p1).
   Proof. 
     Admitted.
@@ -2395,25 +2395,58 @@ Admitted. *)
 Admitted. *)
 
 
-  Lemma stack_free_assertion_trnsl assertion stk_id stk_id' mp : 
-    StackFree assertion -> 
-    trnsl_assertion assertion stk_id mp = trnsl_assertion assertion stk_id' mp.
+  Lemma stack_free_assertion_trnsl assertion stk_id stk_id' mp :
+    StackFree assertion ->
+    trnsl_assertion assertion stk_id mp ≡ trnsl_assertion assertion stk_id' mp.
   Proof.
-  Admitted.
-    (* revert assertion.
-    induction assertion0.
-    - intros. unfold trnsl_assertion. unfold trnsl_assertion'.
-    (* rewrite /trnsl_assertion_pre. *)
-    rewrite (leibniz_equiv (fixpoint trnsl_assertion_pre (LProc proc_name0 proc_entry) stk_id mp) (fixpoint trnsl_assertion_pre (LProc proc_name0 proc_entry) stk_id' mp)).
-    rewrite (fixpoint_unfold (trnsl_assertion_str : _ -> _ -> _ -> iPropO Σ)).
-
-    rewrite (fixpoint_unfold trnsl_assertion_pre).
-
-    rewrite fixpoint_unfold.
- rewrite trnsl_assertion_unfold.
-    simpl. done.
-  Admitted. *)
-
+    intros HSF.
+    unfold trnsl_assertion, trnsl_assertion'.
+    cut (forall (a : rrl_lang.assertion) stk stk' mp0, StackFree a →
+        fixpoint trnsl_assertion_pre a stk mp0 ≡ fixpoint trnsl_assertion_pre a stk' mp0).
+    { intros H. exact (H assertion stk_id stk_id' mp HSF). }
+    apply (@fixpoint_ind natSI
+      (rrl_lang.assertion -d> stack_id -d> symb_map -d> iPropO Σ)
+      _ _ trnsl_assertion_pre trnsl_assertion_pre_contractive
+      (fun F => forall a stk stk' mp0, StackFree a -> F a stk mp0 ≡ F a stk' mp0)).
+    - (* Proper *)
+      intros F G HFG HF a stk stk' mp0 Ha.
+      etransitivity. { symmetry. exact (HFG a stk mp0). }
+      etransitivity. { exact (HF a stk stk' mp0 Ha). }
+      exact (HFG a stk' mp0).
+    - (* ∃ x, P x *)
+      exists inhabitant. intros a stk stk' mp0 _. reflexivity.
+    - (* Step *)
+      intros F IH a.
+      induction a; intros stk stk' mp0 Hsf; simpl in *; try reflexivity.
+      + inversion Hsf.
+      + inversion Hsf. apply bi.forall_proper. intro v'. exact (IHa stk stk' mp0 H0).
+      + inversion Hsf. apply bi.exist_proper. intro v'.
+        exact (IHa stk stk' (λ x, if (x =? v)%string then v' else mp0 x) H0).
+      + inversion Hsf. apply bi.wand_proper. { reflexivity. } exact (IHa stk stk' mp0 H0).
+      + destruct (inv_map !! inv_name0) as [r|] eqn:Hr; [|reflexivity].
+        simpl. f_equiv. apply IH.
+        inversion Hsf. rewrite Hr in H1. inversion H1. subst. exact H2.
+      + destruct (pred_map !! pred_name0) as [r|] eqn:Hr; [|reflexivity].
+        simpl. f_equiv. apply IH.
+        inversion Hsf. rewrite Hr in H1. inversion H1. subst. exact H2.
+      + inversion Hsf. subst a0 a3. apply bi.sep_proper.
+        { exact (IHa1 stk stk' mp0 H1). } exact (IHa2 stk stk' mp0 H2).
+    - (* LimitPreserving *)
+      apply limit_preserving_forall. intro a.
+      apply limit_preserving_forall. intro stk.
+      apply limit_preserving_forall. intro stk'.
+      apply limit_preserving_forall. intro mp0.
+      apply limit_preserving_impl'. { intros F G _. tauto. }
+      refine (@limit_preserving_equiv natSI
+        (rrl_lang.assertion -d> stack_id -d> symb_map -d> iPropO Σ) _ nat_sidx_finite
+        (iPropO Σ) _
+        (fun (F : rrl_lang.assertion -d> stack_id -d> symb_map -d> iPropO Σ) => F a stk mp0)
+        (fun (F : rrl_lang.assertion -d> stack_id -d> symb_map -d> iPropO Σ) => F a stk' mp0)
+        _ _).
+      + intros n F G HFG. exact (HFG a stk mp0).
+      + intros n F G HFG. exact (HFG a stk' mp0).
+      Unshelve. all: typeclasses eauto.
+  Qed.
 
   Lemma stack_free_assertion_subst
     (Hinv_wf : forall inv r, inv_map !! inv = Some r -> InvBodyWF r)
