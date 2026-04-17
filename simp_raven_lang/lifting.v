@@ -246,9 +246,8 @@ Section lifting.
         with "Hhp"
       ) as "HHeapUpd".
 
-      { 
-        
-        apply (heap_alloc_valid fs σ).
+      {
+        apply (heap_alloc_valid fs σ HNoDup).
       }
 
       assert ((stack σ) = (stack σ')) as H0. {
@@ -285,27 +284,32 @@ Section lifting.
       iExists l. iFrame.
 
       clear H H0 Hprocs.
-      iInduction fs as [ | ] "IHfs".
-      + simpl. done.
-      +
-      simpl in fs_heap_map.
-      subst fs_heap_map.
-      simpl.
-      unfold to_heapUR.
-      rewrite fmap_insert.
+      iInduction fs as [| a fss'] "IHfs" forall (HNoDup).
+      + simpl. iDestruct "HHp2" as "_". iPureIntro. done.
+      + simpl in fs_heap_map.
+        subst fs_heap_map. simpl.
+        unfold to_heapUR.
+        rewrite fmap_insert.
+        inversion HNoDup as [| ? ? H_NotIn H_NoDup'].
+        rewrite insert_singleton_op.
+        2 : {
+          rewrite lookup_fmap.
+          have foldr_fresh : ∀ fss0 : list (fld_name * lang.val),
+            a.1 ∉ fss0.*1 →
+            (foldr (λ f_v acc, (<[heap_addr_constr l f_v.1:=f_v.2]> acc : heap)) ∅ fss0) !! heap_addr_constr l a.1 = None.
+          { intros fss0. induction fss0 as [| fv fss'' IH'].
+            - intros _. apply lookup_empty.
+            - intros H_ni. simpl. rewrite lookup_insert_ne.
+              + apply IH'. set_solver.
+              + intro Heq. apply H_ni. apply elem_of_cons. left. congruence. }
+          rewrite (foldr_fresh fss' H_NotIn). done.
+        }
+        rewrite auth_frag_op.
+        iDestruct "HHp2" as "[HHp2 HHp3]".
+        destruct a as [fld val]. simpl. iFrame.
+        iApply ("IHfs" with "[%]"). { exact H_NoDup'. } iApply "HHp3".
 
-      rewrite insert_singleton_op. 
-      2 : { 
-        (* uniqueness of fields in f_v *)
-        admit.
-       }
-       rewrite auth_frag_op.
-       iDestruct "HHp2" as "[HHp2 HHp3]".
-       
-       destruct a as [fld val]. simpl. iFrame.
-       iApply "IHfs". { inversion HNoDup. done. } iApply "HHp3".
-
-  Admitted.
+  Qed.
 
   Lemma wp_seq p q r s1 s2 mask:
   {{{ p }}} s1 @ mask {{{ RET lang.LitUnit; q }}} -∗
@@ -754,7 +758,7 @@ Section lifting.
        must not yet be in the stack map.  This follows from the invariant that
        all allocated stack ids are ≤ max_stack_id, but that invariant is not
        yet threaded through state_interp; admit it for now. *)
-    assert (Hfresh_new : stack σ !! Z.of_nat (Z.to_nat σ.(max_stack_id) + 1) = None) by admit.
+    assert (Hfresh_new : stack σ !! Z.of_nat (Z.to_nat σ.(max_stack_id) + 1) = None) by apply max_stk_id_fresh.
     iPoseProof ((stack_new_stk_frm_upd σ new_stk_frame Hfresh_new) with "Hstack") as ">[Hstack' Hstk']".
     
     simpl; iFrame. iModIntro.
@@ -815,7 +819,7 @@ Section lifting.
          (unfold σ', update_lvar; rewrite HstkPure2; done).
        iFrame "Hhp Hstack Hproc".
        simpl. iApply "HΦ". iFrame.
-  Admitted. (* admit used for Hfresh_new above; replace with Qed once that is proved *)
+  Qed.
 
 End lifting.
 

@@ -321,68 +321,77 @@ Section updates.
     iModIntro. iFrame.
   Qed.
 
+  Axiom fresh_loc_is_fresh : ∀ (h : heap) (fld : fld_name), h !! heap_addr_constr (fresh_loc h) fld = None.
+
+  Lemma foldr_update_heap_not_mem (l : loc) (fld : fld_name) (fss : list (fld_name * val)) (σ : state) :
+    fld ∉ fss.*1 →
+    global_heap σ !! heap_addr_constr l fld = None →
+    global_heap (foldr (λ f_v acc, update_heap acc l f_v.1 f_v.2) σ fss) !! heap_addr_constr l fld = None.
+  Proof.
+    intros H_NotIn H_Fresh.
+    induction fss as [| f_v fss' IH].
+    - simpl. exact H_Fresh.
+    - simpl. unfold update_heap. simpl.
+      destruct (decide (heap_addr_constr l f_v.1 = heap_addr_constr l fld)) as [Heq|Hne].
+      { exfalso.
+        have Hfld : f_v.1 = fld. { injection Heq as Hfld. exact Hfld. }
+        apply H_NotIn. apply elem_of_cons. left. exact (eq_sym Hfld). }
+      rewrite lookup_insert_ne; [| exact Hne].
+      apply IH.
+      intro Hin. apply H_NotIn. simpl. right. exact Hin.
+  Qed.
+
+  Lemma foldr_build_heap_not_mem (l : loc) (fld : fld_name) (fss : list (fld_name * val)) :
+    fld ∉ fss.*1 →
+    (foldr (λ f_v acc, <[heap_addr_constr l f_v.1 := f_v.2]> acc) (∅ : heap) fss) !! heap_addr_constr l fld = None.
+  Proof.
+    intros H_NotIn.
+    induction fss as [| f_v fss' IH].
+    - simpl. apply lookup_empty.
+    - simpl. rewrite lookup_insert_ne.
+      + apply IH. intro Hin. apply H_NotIn. simpl. right. exact Hin.
+      + intro Heq.
+        have Hfld : f_v.1 = fld. { injection Heq as Hfld. exact Hfld. }
+        apply H_NotIn. apply elem_of_cons. left. exact (eq_sym Hfld).
+  Qed.
+
   Lemma heap_alloc_valid :
-    ∀ fs σ, 
+    ∀ fs σ,
+    NoDup fs.*1 →
     let l := fresh_loc (global_heap σ) in
-    let σ' := fold_right 
+    let σ' := fold_right
         (λ f_v acc ,
-          update_heap acc l f_v.1 f_v.2) 
+          update_heap acc l f_v.1 f_v.2)
       σ fs  in
     let fs_heap_map := fold_right
-        (λ f_v acc, <[heap_addr_constr l f_v.1:=f_v.2]> acc) 
+        (λ f_v acc, <[heap_addr_constr l f_v.1:=f_v.2]> acc)
       ∅ fs in
     ● to_heapUR (global_heap σ) ~~> ● to_heapUR (global_heap σ') ⋅ ◯ to_heapUR fs_heap_map.
-  Proof. 
+  Proof.
     induction fs as [ | fs fss IH].
 
-    - intros σ l σ' fs_heap_map. simpl in fs_heap_map. subst fs_heap_map. 
-      (* set (σ' := (fold_left
-        (λ (acc : lang.state) (f_v : fld_name * lang.val), update_heap acc l f_v.1 f_v.2)
-        [] σ0)). *)
-      
+    - intros σ HNoDup l σ' fs_heap_map. simpl in fs_heap_map. subst fs_heap_map.
       simpl in σ'. subst σ'. unfold to_heapUR. rewrite fmap_empty. apply auth_update_alloc.
       have Heq : ucmra_unit heapUR = (∅ : gmapUR heap_addr heap_cellR). { done. }
       rewrite Heq. done.
 
-      - intros σ l σ' fs_heap_map. simpl in fs_heap_map.
-       simpl in σ'.
-       specialize (IH σ).
-
+    - intros σ HNoDup l σ' fs_heap_map. simpl in fs_heap_map.
+      simpl in σ'.
+      inversion HNoDup as [| ? ? H_NotIn H_NoDup'].
+      specialize (IH σ H_NoDup').
       unfold l in IH.
-      remember (fresh_loc (global_heap σ)) as l0 eqn:Hl.
-
-
-      remember (foldr
-          (λ f_v acc, update_heap acc l0 f_v.1 f_v.2)
-        σ fss
-      ) as σ0 eqn:Hσ.
-
-      remember (foldr
-        (λ f_v acc, <[heap_addr_constr l0 f_v.1:=f_v.2]> acc
-        ) ∅ fss
-      ) as fs_heap_map0 eqn:Hfs.
-
-      subst l.
-
-
-      remember σ' as σ'0 eqn:Hσ'.
-      subst σ'.
-      rewrite <- Hσ in Hσ'.
-
-      remember fs_heap_map as fs_heap_map'0 eqn:Hfs'.
-      subst fs_heap_map.
-      rewrite <- Hfs in Hfs'.
-      subst σ'0.
-      subst fs_heap_map'0.
       rewrite IH.
-      unfold update_heap. simpl.
+      unfold σ', fs_heap_map. unfold update_heap. simpl.
       apply auth_update.
       unfold to_heapUR at 3 4.
       rewrite fmap_insert. rewrite fmap_insert.
       apply alloc_local_update.
-      
-      { admit. }
-      { admit. }
-  Admitted.
+      { rewrite lookup_fmap.
+        rewrite (foldr_update_heap_not_mem l fs.1 fss σ H_NotIn (fresh_loc_is_fresh _ _)).
+        done. }
+      { unfold to_heap_cellR. apply pair_valid. done. }
+  Qed.
 
 End updates.
+
+Axiom max_stk_id_fresh : ∀ (σ : state), σ.(stack) !! Z.of_nat (Z.to_nat σ.(max_stack_id) + 1) = None.
