@@ -4,7 +4,6 @@
 -Q rich_raven_lang raven_iris.rich_raven_lang
 
 simp_raven_lang/lang.v
-# simp_raven_lang/direct_lang.v
 simp_raven_lang/ghost_state.v
 simp_raven_lang/lifting.v
 

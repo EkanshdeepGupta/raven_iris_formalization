@@ -2,8 +2,6 @@ From iris.algebra Require Import cmra gmap.
 From iris.program_logic Require Export weakestpre.
 From iris.proofmode Require Import tactics.
 From iris.program_logic Require Import ectx_lifting.
-(* From iris_simp_lang Require Import notation tactics class_instances. *)
-(* From iris_simp_lang Require Import heap_lib. *)
 From iris Require Import options.
 From raven_iris.simp_raven_lang Require Import lang ghost_state.
 From stdpp Require Import gmap list fin_maps.
@@ -25,25 +23,13 @@ Global Instance simpLang_irisG `{!simpLangG Σ} : irisGS simp_lang Σ := {
   state_interp_mono _ _ _ _ := fupd_intro _ _;
 }.
 
-(* Class simpGS Σ := {
-  simp_inG :> inG Σ _;
-  simp_langG :> simpLangG Σ;
-  (* This line provides the wp instance: *)
-  simp_irisGS :> irisGS simp_lang Σ
-}. *)
-
 Section lifting.
-  (* Open Scope expr_scope. *)
-  (* Open Scope bi_scope. *)
-  (* Check (λ e Φ, WP e @ ⊤ {{ Φ }}). *)
-
   Context `{!simpLangG Σ}.
 
   Lemma wp_heap_wr stk_id stk_frm v e val l f x msk :
     {{{ stack_own[ stk_id, stk_frm] ∗ l#f ↦{1%Qp} x ∗ ⌜stk_frm.(locals) !! v = Some (LitLoc l)⌝ ∗ ⌜expr_step e stk_frm (Val val)⌝}}}
       (RTFldWr v f e stk_id) @ msk
     {{{RET LitUnit; stack_own[ stk_id, stk_frm] ∗ l#f ↦{1%Qp} val ∗ £1 }}}.
-    (* Unset Printing Notations. *)
   Proof.
     iIntros (Φ) "[Hstk [Hl [%He %He2]]] HΦ" .
     iApply wp_lift_atomic_base_step_no_fork; first done.
@@ -88,8 +74,6 @@ Section lifting.
       iModIntro.
       iSplitL "Hauth".
       + by iFrame.
-        (* unfold update_heap in σ'. *)
-    
       + iApply "HΦ". iFrame.
   Qed.
 
@@ -114,7 +98,6 @@ Section lifting.
       inversion H as [  |  |  |
         σ0 stk_id0 stk_frm0 e1 v0 e0 Hstk_frm0 Hv0 
       |  |  |  |  |  |  |  |  |  |  ]; subst κ efs σ2 σ0 v0 e1 e2; simpl. 
-      (* iFrame. *)
 
       assert (stk_frm0 = stk_frm) as Hstkfrm_subst. { 
           rewrite HstkPure in Hstk_frm0.  
@@ -141,7 +124,6 @@ Section lifting.
       iFrame.
 
       + iApply "HΦ". by iFrame.
-
   Qed.
 
 
@@ -797,7 +779,6 @@ Section lifting.
       iModIntro. iSplitR.
       
       * iPureIntro. unfold base_reducible.
-        (* destruct Hret as [ret_val' Hret]. *)
         
       exists [], (RTVal LitUnit), (update_lvar σ1 x stk_id ret_val), [].
       apply (ActiveCallStep σ1 stk_id' stk_id x LitUnit stk_frm'' ret_val); try done.

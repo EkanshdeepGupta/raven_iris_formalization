@@ -492,12 +492,6 @@ Section MainTranslation.
       (∃ stk_frm'',
       ({{{ stack_own[stk_id, stk_frm] ∗ precond }}} (to_rtstmt stk_id stmt) @ mask {{{ RET lang.LitUnit; stack_own[stk_id, stk_frm''] ∗ ⌜ (locals stk_frm'' !! "#ret_val") = Some ret_val ⌝ ∗ postcond }}})).
 
-    (* Lemma transport_congr {A B : cmra} (H : (cmra_car A) = (cmra_car B)) {x y : A} (Hupd : x ~~> y) :
-      transport H x ~~> transport H y.
-    Proof.
-      unfold transport. revert Hupd.
-    (* usually trivial by proper instance or f_equiv *) Admitted. *)
-
     Theorem rrl_validity ρ σ ι1 ι2 stk_id p msk cmd q
       (inv_map_wf : map_Forall (λ _ r, InvBodyWF r) inv_map)
       (pred_map_wf : map_Forall (λ _ r, PredBodyWF r) pred_map) :
@@ -1360,11 +1354,13 @@ Section MainTranslation.
           {
             iFrame.
 
-            pose proof (trnsl_assertion_w_lexpr_subst proc_pre lexprs proc_args.*1 arg_vals stk_id mp u1 proc_frame_pre Hlexprs_arg_vals Hproc_pre Hproc_frame_pre) as Himpl.
+            pose proof (trnsl_assertion_w_lexpr_subst proc_pre lexprs proc_args.*1 arg_vals stk_id mp u1 proc_frame_pre
+              inv_map_wf pred_map_wf (proj1 Hspec_StackFree)
+              Hlexprs_arg_vals Hproc_pre Hproc_frame_pre) as Himpl.
             iApply Himpl. iFrame.
           }
 
-          
+
           iNext. iExact "HΦ".
           }
 
@@ -1374,18 +1370,20 @@ Section MainTranslation.
             iNext. iIntros "[Hstk [Hq Hcr']]".
             iApply "HΦ". iCombine "Hcr Hcr'" as "Hcr". rewrite Nat.add_1_r. iFrame. iExists (trnsl_val ret_val).
 
-            set (trnsl_assertion (subst proc_post (<["#ret_var":=LVar lvar_x]> subst_map)) stk_id
+            set (trnsl_assertion (subst proc_post (<["#ret_val":=LVar lvar_x]> subst_map)) stk_id
             (λ x0 : lvar, if (x0 =? lvar_x)%string then trnsl_val ret_val else mp x0)) as u.
 
-            assert ((trnsl_assertion (subst proc_post (<["#ret_var":=LVar lvar_x]> subst_map)) stk_id
+            assert ((trnsl_assertion (subst proc_post (<["#ret_val":=LVar lvar_x]> subst_map)) stk_id
             (λ x0 : lvar, if (x0 =? lvar_x)%string then trnsl_val ret_val else mp x0)) ≡ u) as Hpost.
             { subst u; reflexivity. }
 
-            
-            iSplitR "Hq". 
-            { rewrite fresh_mp_rewrite_symb_stk_to_stk_frm_compat; try done. rewrite trnsl_lval_trnsl_val_inverse. iFrame. } 
 
-            { pose proof (trnsl_assertion_w_lexpr_subst_r proc_post lexprs proc_args.*1 arg_vals lvar_x ret_val stk stk_id mp u proc_frame_post H Hlexprs_arg_vals Hpost Hproc_frame_post) as Himpl. 
+            iSplitR "Hq".
+            { rewrite fresh_mp_rewrite_symb_stk_to_stk_frm_compat; try done. rewrite trnsl_lval_trnsl_val_inverse. iFrame. }
+
+            { pose proof (trnsl_assertion_w_lexpr_subst_r proc_post lexprs proc_args.*1 arg_vals lvar_x ret_val stk stk_id mp u proc_frame_post
+                inv_map_wf pred_map_wf (proj2 Hspec_StackFree)
+                H Hlexprs_arg_vals Hpost Hproc_frame_post) as Himpl.
             setoid_rewrite <- trnsl_assertion_unfold. iApply Himpl. iFrame. }
           }
         }
@@ -1467,11 +1465,13 @@ Section MainTranslation.
 
           {
             iFrame.
-            pose proof (trnsl_assertion_w_lexpr_subst proc_pre lexprs proc_args.*1 arg_vals stk_id mp u1 proc_frame_pre Hlexprs_arg_vals Hproc_pre Hproc_frame_pre) as Himpl.
+            pose proof (trnsl_assertion_w_lexpr_subst proc_pre lexprs proc_args.*1 arg_vals stk_id mp u1 proc_frame_pre
+              inv_map_wf pred_map_wf (proj1 Hspec_StackFree)
+              Hlexprs_arg_vals Hproc_pre Hproc_frame_pre) as Himpl.
             iApply Himpl. iFrame.
           }
 
-          
+
           iNext. iExact "HΦ".
 
           }
@@ -1482,15 +1482,17 @@ Section MainTranslation.
             iNext. iIntros "[Hstk [Hq Hcr']]".
             iApply "HΦ". iCombine "Hcr" "Hcr'" as "Hcr". rewrite Nat.add_1_r. iFrame. iExists (trnsl_val ret_val).
 
-            set (trnsl_assertion (subst proc_post (<["#ret_var":=LVar lvar_x]> subst_map)) stk_id
+            set (trnsl_assertion (subst proc_post (<["#ret_val":=LVar lvar_x]> subst_map)) stk_id
             (λ x0 : lvar, if (x0 =? lvar_x)%string then trnsl_val ret_val else mp x0)) as u.
-            assert ((trnsl_assertion (subst proc_post (<["#ret_var":=LVar lvar_x]> subst_map)) stk_id
+            assert ((trnsl_assertion (subst proc_post (<["#ret_val":=LVar lvar_x]> subst_map)) stk_id
             (λ x0 : lvar, if (x0 =? lvar_x)%string then trnsl_val ret_val else mp x0)) ≡ u) as Hpost. { subst u; reflexivity. }
-            
-            iSplitR "Hq". 
-            { rewrite fresh_mp_rewrite_symb_stk_to_stk_frm_compat; try done. rewrite trnsl_lval_trnsl_val_inverse. iFrame. } 
-            
-            { pose proof (trnsl_assertion_w_lexpr_subst_r proc_post lexprs proc_args.*1 arg_vals lvar_x ret_val stk stk_id mp u proc_frame_post H Hlexprs_arg_vals Hpost Hproc_frame_post) as Himpl. 
+
+            iSplitR "Hq".
+            { rewrite fresh_mp_rewrite_symb_stk_to_stk_frm_compat; try done. rewrite trnsl_lval_trnsl_val_inverse. iFrame. }
+
+            { pose proof (trnsl_assertion_w_lexpr_subst_r proc_post lexprs proc_args.*1 arg_vals lvar_x ret_val stk stk_id mp u proc_frame_post
+                inv_map_wf pred_map_wf (proj2 Hspec_StackFree)
+                H Hlexprs_arg_vals Hpost Hproc_frame_post) as Himpl.
             setoid_rewrite <- trnsl_assertion_unfold. iApply Himpl. iFrame. }
           }
 

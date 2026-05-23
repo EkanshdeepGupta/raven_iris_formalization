@@ -45,10 +45,6 @@ Section definitions.
   Context `{!heapG Σ}.
 
   Definition to_heap_cellR (v: val) : heap_cellR := (1%Qp, to_agree v).
-
-  (* Not sure why this is needed. *)
-  (* Global Instance insert : Insert heap_addr (Qp * val) (gmap heap_addr heap_cellR).
-  Proof. unfold Insert; intros; done. Qed. *)
   
   Global Instance heap_add_fmap : FMap (gmap heap_addr).
   Proof. apply gmap_fmap. Qed.
@@ -91,15 +87,6 @@ Section definitions.
     (● ((λ v1 : lang.val, to_heap_cellR v1) <$> <[heap_addr_constr l f:=v0]> (global_heap σ))
     ⋅ ◯ {[heap_addr_constr l f := (1%Qp, to_agree v0)]}).
   Proof.
-    (* Strategy:
-       1. [auth_update] reduces the goal to a local update on the underlying gmap.
-       2. Rewrite the RHS auth component using [fmap_insert] so the updated map
-          has the shape [<[k := new_cell]> old_map] that [singleton_local_update_any]
-          expects.
-       3. [singleton_local_update_any] reduces to a per-cell local update.
-       4. The cell (1%Qp, to_agree _) is Exclusive (because 1%Qp is exclusive in fracR
-          via [frac_full_exclusive] + [pair_exclusive_l]), so [exclusive_local_update]
-          closes the goal with a validity check that is trivially [done]. *)
     apply auth_update.
     rewrite fmap_insert.
     apply singleton_local_update_any.
@@ -119,15 +106,10 @@ Section definitions.
     iPoseProof (own_valid with "HstackV") as "%Hi".
     apply auth_both_valid_discrete in Hi.
     destruct Hi as [Hi1 Hi2].
-    (* iPureIntro. *)
-     (* gmap.lookup_included in Hi1. *)
-    (* Check gmap.lookup_included. *)
     rewrite -> (gmap.lookup_included (to_stackR {[stk_id := stk_frm]}) (to_stackR (stack σ))) in Hi1.
     specialize (Hi1 stk_id).
     iPureIntro.
 
-    (* Locate map_lookup. *)
-    (* unfold to_stackR in Hi1. *)
     rewrite !lookup_fmap in Hi1. cbn in Hi1. rewrite lookup_insert in Hi1. cbn in Hi1.
     destruct (stack σ !! stk_id); try done.
     -  cbn in Hi1. rewrite Excl_included in Hi1. 
@@ -149,7 +131,6 @@ Section definitions.
     apply auth_both_valid_discrete in Hi.
     destruct Hi as [Hi1 Hi2].
 
-    (* Search gmap.lookup_included. *)
     rewrite (gmap.lookup_included ({[heap_addr_constr l f := (q, to_agree v)]})) in Hi1.
     specialize (Hi1 (heap_addr_constr l f)).
     iPureIntro.
@@ -183,13 +164,6 @@ Section definitions.
   (proc_tbl_interp (procs σ)) -∗ (proc_tbl_chunk proc proc_entry) -∗
     ⌜σ.(procs) !! proc = Some proc_entry⌝.
   Proof.
-    (* Plan:
-       - proc_tbl_interp  = ghost_map_auth heap_proctbl_name 1 (procs σ)
-       - proc_tbl_chunk p e = p ↪[heap_proctbl_name] e
-         (the ↪ notation is dfrac-full ownership, i.e. dq = DfracOwn 1)
-       Iris's ghost_map library provides:
-         ghost_map_lookup : ghost_map_auth γ q m -∗ k ↪[γ]{dq} v -∗ ⌜m!!k = Some v⌝
-       which is exactly the agreement we need. *)
     iIntros "Hauth Hchunk".
     iApply (ghost_map_lookup with "Hauth Hchunk").
   Qed.
@@ -246,15 +220,6 @@ Section updates.
     ● to_stackR stk_map ~~>
     ● to_stackR (<[stk_id := stk_frm]> stk_map) ⋅ ◯ to_stackR {[stk_id := stk_frm]}.
   Proof.
-    (* Plan:
-       auth_update_alloc reduces ~~> to a local update ~l~>.
-       After unfolding to_stackR (= fmap Excl):
-         - fmap_insert rewrites Excl <$> <[k:=v]> m → <[k:=Excl v]> (Excl <$> m)
-         - map_fmap_singleton rewrites Excl <$> {[k:=v]} → {[k:=Excl v]}
-       alloc_singleton_local_update then needs:
-         - freshness: (Excl <$> stk_map) !! stk_id = None
-           (rewrite lookup_fmap then Hfresh)
-         - validity: Excl stk_frm is valid (always true) *)
     apply auth_update_alloc.
     unfold to_stackR.
     rewrite fmap_insert.         (* Excl <$> <[k:=v]> m = <[k:=Excl v]> (Excl <$> m) *)
@@ -274,13 +239,6 @@ Section updates.
     stack_interp (update_stack σ (Z.to_nat σ.(max_stack_id) + 1) stk_frm').(stack) ∗
     stack_own[Z.to_nat σ.(max_stack_id) + 1, stk_frm'].
   Proof.
-    (* Plan:
-       1. Unfold stack_interp / stack_frame_own to expose own predicates.
-       2. iMod (own_update) with the CMRA update proved by stack_alloc_cmra_upd.
-          `exact` uses Rocq's definitional equality to handle:
-            stack (update_stack σ (Z.to_nat σ.(max_stack_id)+1) stk_frm')
-              ≡ <[Z.of_nat (Z.to_nat σ.(max_stack_id)+1) := stk_frm']> (stack σ)
-          so we pass Hfresh directly to stack_alloc_cmra_upd. *)
     iIntros "Hstack".
     unfold stack_interp, stack_frame_own.
     iMod (own_update with "Hstack") as "[Hnew Hown]".
@@ -293,13 +251,6 @@ Section updates.
     ● to_heapUR (global_heap σ) ⋅ ◯ {[heap_addr_constr l fld := (1%Qp, to_agree v)]} ~~>
     ● to_heapUR (global_heap (update_heap σ l fld v')) ⋅ ◯ {[heap_addr_constr l fld := (1%Qp, to_agree v')]}.
   Proof.
-    (* Plan:
-       heap_upd_valid is heap_update restated using the to_heapUR abbreviation.
-       After unfolding:
-         to_heapUR h = (λ v, to_heap_cellR v) <$> h
-         update_heap σ l fld v' = State (<[heap_addr_constr l fld := v']> (global_heap σ)) ...
-       so global_heap (update_heap σ l fld v') = <[heap_addr_constr l fld := v']> (global_heap σ).
-       The resulting goal is exactly the statement of heap_update. *)
     unfold to_heapUR, update_heap. simpl.
     apply heap_update.
   Qed.

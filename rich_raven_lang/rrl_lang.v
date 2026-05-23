@@ -247,14 +247,6 @@ Proof.
     | LitInt i1, LitInt i2 => cast_if (decide (i1 = i2))
     | LitUnit, LitUnit => left eq_refl
     | LitLoc l1, LitLoc l2 => cast_if (decide (l1 = l2))
-    (* | LitRAElem r1 a1, LitRAElem r2 a2 =>
-        match ra_eq_dec r1 r2 with
-        | left Heq =>
-            (* r1 = r2, so carriers are same, can cast and decide equality on carrier elements *)
-            cast_if (decide (eq_rect r1 (fun r => RA_carrier r) a1 r2 Heq = a2))
-
-        | right _ => right _
-        end *)
     | _, _ => right _
     end). 
   all: try by f_equal.
@@ -335,7 +327,7 @@ Fixpoint subst (ra: assertion) (mp: gmap var LExpr) : assertion := match ra with
 | LExprA e => LExprA (lexpr_subst e mp)
 | LPure p => LPure p
 | LOwn e fld chunk => LOwn (lexpr_subst e mp) fld chunk
-| LGhostOwn e fld RAPack chunk => LGhostOwn e fld RAPack chunk
+| LGhostOwn e fld RAPack chunk => LGhostOwn (lexpr_subst e mp) fld RAPack chunk
 | LForall vars body => LForall vars (subst body mp)
 | LExists vars body => LExists vars (subst body mp)
 | LImpl cond body => LImpl (lexpr_subst cond mp) (subst body mp)
@@ -411,63 +403,15 @@ Inductive StackFree : assertion → Prop :=
     StackFree (subst (pred_record.(pred_body)) (list_to_map (zip pred_record.(pred_args) args))) →
     StackFree (LPred pred_name args).
 
-
-(* Fixpoint StackFreeStr (F : assertion -d> bool) (a: assertion) : bool :=
-match a with
-| LProc proc_name proc_entry => true
-| LStack σ => false
-| LExprA p => true
-| LPure p => true
-| LOwn e fld chunk => true
-| LGhostOwn e fld RAPAck chunk => true
-| LForall v body => StackFreeStr F body
-| LExists v body => StackFreeStr F body
-| LImpl cond body => StackFreeStr F body
-| LInv inv' args => 
-    (* true *)
-    match inv_map !! inv' with
-    | Some inv_record => 
-      let subst_map := list_to_map (zip inv_record.(inv_args) args) in
-      F (subst inv_record.(inv_body) subst_map)
-    | None => true
-    end
-
-| LPred pred args => 
-    (* true *)
-    match pred_map !! pred with 
-    | Some pred_record =>
-      let subst_map := list_to_map (zip pred_record.(pred_args) args) in
-
-      F (subst pred_record.(pred_body) subst_map)
-    | None => true
-    end
-| LAnd a1 a2 => (StackFreeStr F a1) && (StackFreeStr F a2)
-end.
-
-Definition StackFreePre (F : assertion -d> bool) :
-     assertion -d> bool := λ a , StackFreeStr F a.
-
-Global Instance StackFreePre_contractive : Contractive StackFreePre.
-Proof. rewrite /StackFreePre.  intros n F1 F2 Hd a. 
-  revert a.
-  induction a; simpl; try auto.
-  - destruct (inv_map !! inv_name0); try reflexivity.
-    auto. f_equal.
-
-  solve_contractive. repeat (f_contractive || f_equiv). solve_contractive.
-
-
-Definition StackFree := fixpoint StackFreePre. *)
-
 Global Parameter proc_map : gmap proc_name ProcRecord.
-(* Axiom proc_map_set : dom proc_map = proc_set. *)
+
 Axiom proc_args_unique : map_Forall (λ proc proc_entry, NoDup (proc_args_of proc_entry).*1 ) proc_map.
 
 Axiom proc_spec_stack_free :
   map_Forall (λ proc proc_entry, StackFree (proc_precond_of proc_entry) /\ StackFree (proc_postcond_of proc_entry) ) proc_map.
 
 
-(* Type inference for expressions — placed here so expr_well_defined can use it. *)
+(* Type inference for expressions---placed here so expr_well_defined can use it. *)
 Definition typeOf (v: lang.val) : typ :=
 match v with
 | lang.LitBool _ => TpBool
@@ -1953,7 +1897,7 @@ Section RavenLogic.
     RavenHoareTriple ρ σ
       (LAnd (LStack stk) (LAnd (LProc proc_name proc_record) (subst (proc_precond_of proc_record) subst_map))) ι
         (Call x proc_name args) mask
-      (LExists lvar_x (LAnd (LStack (<[x := lvar_x]> stk)) (subst (proc_postcond_of proc_record) (<[ "#ret_var" := LVar lvar_x]> subst_map)))) (ι+1)
+      (LExists lvar_x (LAnd (LStack (<[x := lvar_x]> stk)) (subst (proc_postcond_of proc_record) (<[ "#ret_val" := LVar lvar_x]> subst_map)))) (ι+1)
 
   | SequenceRule ρ σ mask ι1 ι2 ι3 a1 c1 a2 c2 a3 :
     RavenHoareTriple ρ σ
@@ -2282,51 +2226,268 @@ End LExpr_embed.
 
 Section AssertionsProperties.
 
-  Lemma trnsl_assertion_w_lexpr_subst assertion lexprs args arg_vals stk_id mp p1 p2:
-    Forall2 
-  (λ (expr : LExpr) (val0 : lang.val),
-    interp_lexpr expr mp = Some (trnsl_val val0)
-  ) lexprs arg_vals ->
+  (* Effective value of a logical variable under substitution map M and symbolic map mp:
+     either interprets the substituted expression, or returns the raw symbolic value. *)
+  Definition eval_lvar (M : gmap lvar LExpr) (mp : symb_map) (x : lvar) : option val :=
+    match M !! x with
+    | Some e => interp_lexpr e mp
+    | None => Some (mp x)
+    end.
 
-  (trnsl_assertion (subst assertion (list_to_map
-    (zip args
-      lexprs
-    )
-  )) stk_id mp) ≡ p1 ->
+  (* Helper: push interp_lexpr inside a lookup-driven match. Needed because the kernel
+     won't reduce `interp_lexpr (match M!!x with …) mp` propositionally without a case split. *)
+  Lemma interp_lexpr_lookup_match (M : gmap lvar LExpr) (x : lvar) (mp : symb_map) :
+    interp_lexpr (match M !! x with Some e => e | None => LVar x end) mp =
+    match M !! x with Some e => interp_lexpr e mp | None => Some (mp x) end.
+  Proof. destruct (M !! x); reflexivity. Qed.
 
-  (trnsl_assertion (subst assertion (list_to_map
-    (zip args
-      (map (λ val : lang.val, LVal (trnsl_val val)) arg_vals)
-    )
-  )) stk_id mp ) ≡ p2
+  (* If two (M, mp) pairs agree on eval_lvar, lexpr_subst produces the same interp_lexpr result. *)
+  Lemma interp_lexpr_lexpr_subst_eval_lvar_congr (e : LExpr) (M1 M2 : gmap lvar LExpr)
+      (mp1 mp2 : symb_map) :
+    (∀ x, eval_lvar M1 mp1 x = eval_lvar M2 mp2 x) →
+    interp_lexpr (lexpr_subst e M1) mp1 = interp_lexpr (lexpr_subst e M2) mp2.
+  Proof.
+    intro Hbase. induction e; simpl.
+    - (* LVar x: rewrite the interp_lexpr-over-match to the distributed form, then use Hbase. *)
+      rewrite !interp_lexpr_lookup_match.
+      exact (Hbase x).
+    - (* LVal *) reflexivity.
+    - (* LUnOp *) rewrite IHe. reflexivity.
+    - (* LBinOp *) rewrite IHe1; rewrite IHe2. reflexivity.
+    - (* LIfE *)
+      rewrite IHe1.
+      destruct (interp_lexpr (lexpr_subst e1 M2) mp2) as [[b| | |]|]; try reflexivity.
+      destruct b; [exact IHe2 | exact IHe3].
+    - (* LStuck *) reflexivity.
+  Qed.
 
-  -> (p1 -∗ p2).
-  Proof. 
-    Admitted.
+  (* Common generalization:
+     If (M1, mp1) and (M2, mp2) agree on eval_lvar (Hbase), and eval_lvar agreement is
+     preserved under coordinated mp updates at any single variable (Hstab),
+     then translating the same StackFree assertion under both maps yields equivalent props. *)
+  Lemma trnsl_assertion_subst_congr
+    (Hinv_wf : ∀ inv r, inv_map !! inv = Some r → InvBodyWF r)
+    (Hpred_wf : ∀ pred r, pred_map !! pred = Some r → PredBodyWF r)
+    (a : assertion) (M1 M2 : gmap lvar LExpr) stk_id (mp1 mp2 : symb_map) :
+    StackFree a →
+    (* Hstab: eval_lvar agreement is preserved under coordinated same-var mp updates.
+       Quantified over all mp pairs so it applies at every nested LExists depth. *)
+    (∀ (q1 q2 : symb_map),
+      (∀ x, eval_lvar M1 q1 x = eval_lvar M2 q2 x) →
+      ∀ (v : lvar) (v' : val) (x : lvar),
+      eval_lvar M1 (fun y => if (y =? v)%string then v' else q1 y) x =
+      eval_lvar M2 (fun y => if (y =? v)%string then v' else q2 y) x) →
+    (* Hbase: eval_lvar agreement for the given mp1 and mp2. *)
+    (∀ x, eval_lvar M1 mp1 x = eval_lvar M2 mp2 x) →
+    trnsl_assertion (subst a M1) stk_id mp1 ≡ trnsl_assertion (subst a M2) stk_id mp2.
+  Proof.
+    intros HSF Hstab Hbase.
+    unfold trnsl_assertion, trnsl_assertion'.
+    cut (∀ (a0 : assertion) (M1' M2' : gmap lvar LExpr) stk_id' (mp1' mp2' : symb_map),
+      StackFree a0 →
+      (∀ (q1 q2 : symb_map),
+        (∀ x, eval_lvar M1' q1 x = eval_lvar M2' q2 x) →
+        ∀ (v : lvar) (v' : val) (x : lvar),
+        eval_lvar M1' (fun y => if (y =? v)%string then v' else q1 y) x =
+        eval_lvar M2' (fun y => if (y =? v)%string then v' else q2 y) x) →
+      (∀ x, eval_lvar M1' mp1' x = eval_lvar M2' mp2' x) →
+      fixpoint trnsl_assertion_pre (subst a0 M1') stk_id' mp1' ≡
+      fixpoint trnsl_assertion_pre (subst a0 M2') stk_id' mp2').
+    { intro H. exact (H a M1 M2 stk_id mp1 mp2 HSF Hstab Hbase). }
+    apply (@fixpoint_ind natSI
+      (assertion -d> stack_id -d> symb_map -d> iPropO Σ)
+      _ _ trnsl_assertion_pre trnsl_assertion_pre_contractive
+      (fun F =>
+        ∀ (a0 : assertion) (M1' M2' : gmap lvar LExpr) stk_id' (mp1' mp2' : symb_map),
+          StackFree a0 →
+          (∀ (q1 q2 : symb_map),
+            (∀ x, eval_lvar M1' q1 x = eval_lvar M2' q2 x) →
+            ∀ (v : lvar) (v' : val) (x : lvar),
+            eval_lvar M1' (fun y => if (y =? v)%string then v' else q1 y) x =
+            eval_lvar M2' (fun y => if (y =? v)%string then v' else q2 y) x) →
+          (∀ x, eval_lvar M1' mp1' x = eval_lvar M2' mp2' x) →
+          F (subst a0 M1') stk_id' mp1' ≡ F (subst a0 M2') stk_id' mp2')).
+    - (* Proper *)
+      intros F G HFG HF a0 M1' M2' stk_id' mp1' mp2' Ha0 Hstab' Hbase'.
+      etransitivity. { symmetry. exact (HFG (subst a0 M1') stk_id' mp1'). }
+      etransitivity. { exact (HF a0 M1' M2' stk_id' mp1' mp2' Ha0 Hstab' Hbase'). }
+      exact (HFG (subst a0 M2') stk_id' mp2').
+    - (* lower bound *)
+      exists inhabitant. intros; reflexivity.
+    - (* step: structural induction on a0, using fixpoint IH for LInv/LPred *)
+      intros F IH.
+      induction a0; intros M1' M2' stk_id' mp1' mp2' Hsf Hstab' Hbase'; simpl in *.
+      + (* LProc: both sides independent of M and mp *) reflexivity.
+      + (* LStack: not StackFree *) inversion Hsf.
+      + (* LExprA e *)
+        apply bi.pure_proper. unfold LExpr_holds.
+        rewrite (interp_lexpr_lexpr_subst_eval_lvar_congr _ M1' M2' mp1' mp2' Hbase'). tauto.
+      + (* LPure p *) reflexivity.
+      + (* LOwn e fld chunk *)
+        apply bi.exist_proper. intro l. apply bi.sep_proper; [| reflexivity].
+        apply bi.pure_proper. unfold LExpr_holds.
+        have Hcongr := interp_lexpr_lexpr_subst_eval_lvar_congr
+          (LBinOp EqOp e (LVal (LitLoc l))) M1' M2' mp1' mp2' Hbase'.
+        simpl in Hcongr |- *. rewrite Hcongr. tauto.
+      + (* LGhostOwn e fld RAPack chunk: subst now substitutes e via lexpr_subst.
+           Destruct Γ RAPack to eliminate the let-binding, then follow LOwn pattern. *)
+        destruct (Γ RAPack) as [i [U [Hdis [Heq_car [Heq_cmra [Hop Hvalid]]]]]].
+        apply bi.exist_proper. intro l. apply bi.sep_proper; [| reflexivity].
+        apply bi.pure_proper. unfold LExpr_holds.
+        have Hcongr := interp_lexpr_lexpr_subst_eval_lvar_congr
+          (LBinOp EqOp e (LVal (LitLoc l))) M1' M2' mp1' mp2' Hbase'.
+        simpl in Hcongr |- *. rewrite Hcongr. tauto.
+      + (* LForall v body: LForall does not update mp *)
+        inversion Hsf.
+        apply bi.forall_proper. intro v'.
+        exact (IHa0 M1' M2' stk_id' mp1' mp2' H0 Hstab' Hbase').
+      + (* LExists v body: LExists updates mp with v ↦ v'; use Hstab to get new Hbase *)
+        inversion Hsf.
+        apply bi.exist_proper. intro v'.
+        apply (IHa0 M1' M2' stk_id'
+          (fun y => if (y =? v)%string then v' else mp1' y)
+          (fun y => if (y =? v)%string then v' else mp2' y)
+          H0 Hstab').
+        intro x. exact (Hstab' mp1' mp2' Hbase' v v' x).
+      + (* LImpl cond body *)
+        inversion Hsf.
+        apply bi.wand_proper.
+        * apply bi.pure_proper. unfold LExpr_holds.
+          rewrite (interp_lexpr_lexpr_subst_eval_lvar_congr _ M1' M2' mp1' mp2' Hbase'). tauto.
+        * exact (IHa0 M1' M2' stk_id' mp1' mp2' H0 Hstab' Hbase').
+      + (* LInv: use InvBodyWF to rewrite, then apply fixpoint IH *)
+        destruct (inv_map !! inv_name0) as [r|] eqn:Hr; [| reflexivity].
+        f_equiv.
+        have Hwf := Hinv_wf inv_name0 r Hr.
+        inversion Hsf. rewrite Hr in H1. inversion H1. subst inv_record.
+        rewrite (Hwf args M1'); rewrite (Hwf args M2').
+        exact (IH (subst r.(inv_body) (list_to_map (zip r.(inv_args) args)))
+          M1' M2' stk_id' mp1' mp2' H2 Hstab' Hbase').
+      + (* LPred: use PredBodyWF to rewrite, then apply fixpoint IH *)
+        destruct (pred_map !! pred_name0) as [r|] eqn:Hr; [| reflexivity].
+        f_equiv.
+        have Hwf := Hpred_wf pred_name0 r Hr.
+        inversion Hsf. rewrite Hr in H1. inversion H1. subst pred_record.
+        rewrite (Hwf args M1'); rewrite (Hwf args M2').
+        exact (IH (subst r.(pred_body) (list_to_map (zip r.(pred_args) args)))
+          M1' M2' stk_id' mp1' mp2' H2 Hstab' Hbase').
+      + (* LAnd a1 a2 *)
+        inversion Hsf. subst.
+        apply bi.sep_proper.
+        * exact (IHa0_1 M1' M2' stk_id' mp1' mp2' H1 Hstab' Hbase').
+        * exact (IHa0_2 M1' M2' stk_id' mp1' mp2' H2 Hstab' Hbase').
+    - (* LimitPreserving *)
+      apply limit_preserving_forall. intro a0.
+      apply limit_preserving_forall. intro M1'.
+      apply limit_preserving_forall. intro M2'.
+      apply limit_preserving_forall. intro stk_id'.
+      apply limit_preserving_forall. intro mp1'.
+      apply limit_preserving_forall. intro mp2'.
+      apply limit_preserving_impl'. { intros F G _. tauto. }
+      apply limit_preserving_impl'. { intros F G _. tauto. }
+      apply limit_preserving_impl'. { intros F G _. tauto. }
+      refine (@limit_preserving_equiv natSI
+        (assertion -d> stack_id -d> symb_map -d> iPropO Σ) _ nat_sidx_finite
+        (iPropO Σ) _
+        (fun F => F (subst a0 M1') stk_id' mp1')
+        (fun F => F (subst a0 M2') stk_id' mp2')
+        _ _).
+      + intros n F G HFG. exact (HFG (subst a0 M1') stk_id' mp1').
+      + intros n F G HFG. exact (HFG (subst a0 M2') stk_id' mp2').
+      Unshelve. all: typeclasses eauto.
+  Qed.
 
-  Lemma trnsl_assertion_w_lexpr_subst_r assertion lexprs args arg_vals lvar_x ret_val stk stk_id mp p1 p2:
-    fresh_lvar stk lvar_x ->
-    Forall2 
-  (λ (expr : LExpr) (val0 : lang.val),
-    interp_lexpr expr mp = Some (trnsl_val val0)
-  ) lexprs arg_vals ->
+  (* Helper: eval_lvar agreement holds for list_to_map (zip args lexprs) vs
+     list_to_map (zip args (map LVal arg_vals)) when lexprs and arg_vals are Forall2-related. *)
+  Lemma eval_lvar_list_to_map_zip_forall2 (args : list lvar) (lexprs : list LExpr)
+      (arg_vals : list lang.val) (mp : symb_map) :
+    Forall2 (fun le v => interp_lexpr le mp = Some (trnsl_val v)) lexprs arg_vals →
+    ∀ x,
+    eval_lvar (list_to_map (zip args lexprs)) mp x =
+    eval_lvar (list_to_map (zip args (map (fun v : lang.val => LVal (trnsl_val v)) arg_vals))) mp x.
+  Proof.
+    intro HF2. unfold eval_lvar.
+    revert args.
+    induction HF2 as [| le v lexprs' arg_vals' Hle HF2' IH]; intro args.
+    - simpl. destruct args; simpl; reflexivity.
+    - destruct args as [| a args']; simpl.
+      + intro x. reflexivity.
+      + intro x.
+        destruct (decide (x = a)) as [-> | Hne].
+        * rewrite !lookup_insert. simpl. exact Hle.
+        * rewrite !lookup_insert_ne; [| by intro H; apply Hne; exact (eq_sym H) | by intro H; apply Hne; exact (eq_sym H)].
+          exact (IH args' x).
+  Qed.
 
-  (trnsl_assertion (subst assertion (<["#ret_var":=LVar lvar_x]>(list_to_map
-    (zip args
-      lexprs
-    )
-  ))) stk_id (λ x0 : lvar, if (x0 =? lvar_x)%string then trnsl_val ret_val else
-  mp x0)) ≡ p1 ->
+  (* Admitted: holds when LExists binders in proc specs are fresh w.r.t.
+     free logical variables in lexprs (argument translations).
+     TODO: Prove from spec freshness / well-formedness conditions. *)
+  Lemma hstab_lexpr_subst_fwd (args : list lvar) (lexprs : list LExpr)
+      (arg_vals : list lang.val) :
+    ∀ (q1 q2 : symb_map),
+    (∀ x, eval_lvar (list_to_map (zip args lexprs)) q1 x =
+           eval_lvar (list_to_map (zip args (map (λ w : lang.val, LVal (trnsl_val w)) arg_vals))) q2 x) →
+    ∀ (v : lvar) (v' : val) (x : lvar),
+    eval_lvar (list_to_map (zip args lexprs)) (fun y => if (y =? v)%string then v' else q1 y) x =
+    eval_lvar (list_to_map (zip args (map (λ w : lang.val, LVal (trnsl_val w)) arg_vals))) (fun y => if (y =? v)%string then v' else q2 y) x.
+  Proof. Admitted.
 
-  (trnsl_assertion (subst assertion (<["#ret_val":=LVal (trnsl_val ret_val)]>(list_to_map
-    (zip args
-      (map (λ val : lang.val, LVal (trnsl_val val)) arg_vals)
-    )
-  ))) stk_id mp ) ≡ p2
+  Lemma hstab_lexpr_subst_r (args : list lvar) (lexprs : list LExpr)
+      (arg_vals : list lang.val) (lvar_x : lvar) (ret_val : lang.val) :
+    ∀ (q1 q2 : symb_map),
+    (∀ x, eval_lvar (<["#ret_val" := LVar lvar_x]>(list_to_map (zip args lexprs))) q1 x =
+           eval_lvar (<["#ret_val" := LVal (trnsl_val ret_val)]>(list_to_map (zip args (map (λ w : lang.val, LVal (trnsl_val w)) arg_vals)))) q2 x) →
+    ∀ (v : lvar) (v' : val) (x : lvar),
+    eval_lvar (<["#ret_val" := LVar lvar_x]>(list_to_map (zip args lexprs))) (fun y => if (y =? v)%string then v' else q1 y) x =
+    eval_lvar (<["#ret_val" := LVal (trnsl_val ret_val)]>(list_to_map (zip args (map (λ w : lang.val, LVal (trnsl_val w)) arg_vals)))) (fun y => if (y =? v)%string then v' else q2 y) x.
+  Proof. Admitted.
 
-  -> (p2 -∗ p1).
-  Proof. 
-    Admitted.
+  Lemma hbase_lexpr_subst_r (args : list lvar) (lexprs : list LExpr)
+      (arg_vals : list lang.val) (lvar_x : lvar) (ret_val : lang.val) (mp : symb_map) :
+    Forall2 (λ expr val0, interp_lexpr expr mp = Some (trnsl_val val0)) lexprs arg_vals →
+    ∀ x,
+    eval_lvar (<["#ret_val" := LVar lvar_x]>(list_to_map (zip args lexprs)))
+      (λ x0, if (x0 =? lvar_x)%string then trnsl_val ret_val else mp x0) x =
+    eval_lvar (<["#ret_val" := LVal (trnsl_val ret_val)]>(list_to_map (zip args (map (λ w : lang.val, LVal (trnsl_val w)) arg_vals))))
+      mp x.
+  Proof. Admitted.
+
+  Lemma trnsl_assertion_w_lexpr_subst assertion lexprs args arg_vals stk_id mp p1 p2
+      (Hinv_wf : ∀ inv r, inv_map !! inv = Some r → InvBodyWF r)
+      (Hpred_wf : ∀ pred r, pred_map !! pred = Some r → PredBodyWF r)
+      (HSF : StackFree assertion) :
+    Forall2 (λ expr val0, interp_lexpr expr mp = Some (trnsl_val val0)) lexprs arg_vals →
+    trnsl_assertion (subst assertion (list_to_map (zip args lexprs))) stk_id mp ≡ p1 →
+    trnsl_assertion (subst assertion (list_to_map (zip args (map (λ val : lang.val, LVal (trnsl_val val)) arg_vals)))) stk_id mp ≡ p2 →
+    p1 -∗ p2.
+  Proof.
+    intros HF2 Hp1 Hp2.
+    have Hbase := eval_lvar_list_to_map_zip_forall2 args lexprs arg_vals mp HF2.
+    have Hstab := hstab_lexpr_subst_fwd args lexprs arg_vals.
+    have Heq := trnsl_assertion_subst_congr Hinv_wf Hpred_wf assertion _ _ stk_id mp mp HSF Hstab Hbase.
+    rewrite <- Hp1. rewrite Heq. rewrite Hp2.
+    iIntros "H". iExact "H".
+  Qed.
+
+  Lemma trnsl_assertion_w_lexpr_subst_r assertion lexprs args arg_vals lvar_x ret_val stk stk_id mp p1 p2
+      (Hinv_wf : ∀ inv r, inv_map !! inv = Some r → InvBodyWF r)
+      (Hpred_wf : ∀ pred r, pred_map !! pred = Some r → PredBodyWF r)
+      (HSF : StackFree assertion) :
+    fresh_lvar stk lvar_x →
+    Forall2 (λ expr val0, interp_lexpr expr mp = Some (trnsl_val val0)) lexprs arg_vals →
+    trnsl_assertion (subst assertion (<["#ret_val":=LVar lvar_x]>(list_to_map (zip args lexprs)))) stk_id
+      (λ x0, if (x0 =? lvar_x)%string then trnsl_val ret_val else mp x0) ≡ p1 →
+    trnsl_assertion (subst assertion (<["#ret_val":=LVal (trnsl_val ret_val)]>(list_to_map (zip args (map (λ val : lang.val, LVal (trnsl_val val)) arg_vals))))) stk_id mp ≡ p2 →
+    p2 -∗ p1.
+  Proof.
+    intros _Hfresh HF2 Hp1 Hp2.
+    have Hstab_r := hstab_lexpr_subst_r args lexprs arg_vals lvar_x ret_val.
+    have Hbase_r := hbase_lexpr_subst_r args lexprs arg_vals lvar_x ret_val mp HF2.
+    have Heq := trnsl_assertion_subst_congr Hinv_wf Hpred_wf assertion _ _ stk_id
+      (λ x0, if (x0 =? lvar_x)%string then trnsl_val ret_val else mp x0) mp HSF Hstab_r Hbase_r.
+    rewrite <- Hp2. rewrite <- Heq. rewrite Hp1.
+    iIntros "H". iExact "H".
+  Qed.
 
 
 
@@ -2370,30 +2531,6 @@ Section AssertionsProperties.
       inversion Hsf; subst a0 a3.
       rewrite (IHa1 stk stk' mp H1) (IHa2 stk stk' mp H2). reflexivity.
   Qed.
-
-(* instantiate with the fixed point *)
-(* Lemma stack_free_assertion_trnsl a stk stk' mp :
-  StackFree a ->
-  trnsl_assertion a stk mp = trnsl_assertion a stk' mp.
-Proof.
-Admitted. *)
-  (* intros HSF.
-  unfold trnsl_assertion.
-   (* trnsl_assertion'. *)
-  rewrite trnsl_assertion_unfold.
-  (* Induction on the StackFree derivation *)
-  induction HSF.
-
-  - rewrite fixpoint_unfold. (* Case for each constructor of StackFree *)
-    
-    (* Try to simplify the fixpoint directly without unfolding *)
-    (* The idea is that for stack-free assertions, the computation
-       doesn't depend on the stack parameter *)
-    
-    (* You may need to use functional extensionality or 
-       properties specific to how trnsl_assertion_str is defined *)
-Admitted. *)
-
 
   Lemma stack_free_assertion_trnsl assertion stk_id stk_id' mp :
     StackFree assertion ->
