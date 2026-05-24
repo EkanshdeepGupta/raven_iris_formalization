@@ -1354,8 +1354,19 @@ Section MainTranslation.
           {
             iFrame.
 
+            have HfvA : assertion_lexpr_fvars proc_pre ⊆ dom (list_to_map (zip proc_args.*1 lexprs) : gmap lvar LExpr).
+            { have Hfv := proj1 (proc_spec_lexpr_fvars_bounded proc_name _ H0).
+              have Hlen : length proc_args.*1 ≤ length lexprs. { have := Forall2_length _ _ _ HlocalsDef. have := Forall2_length _ _ _ Hlexprs_arg_vals. lia. }
+              rewrite dom_list_to_map_L. rewrite (fst_zip _ _ Hlen). exact Hfv. }
+            have HdomEq : dom (list_to_map (zip proc_args.*1 lexprs) : gmap lvar LExpr) = dom (list_to_map (zip proc_args.*1 (map (λ val : lang.val, LVal (trnsl_val val)) arg_vals)) : gmap lvar LExpr).
+            { have Hlen : length proc_args.*1 ≤ length lexprs. { have := Forall2_length _ _ _ HlocalsDef. have := Forall2_length _ _ _ Hlexprs_arg_vals. lia. }
+              have Hlen2 : length proc_args.*1 ≤ length (map (λ val : lang.val, LVal (trnsl_val val)) arg_vals). { rewrite map_length. have := Forall2_length _ _ _ HlocalsDef. lia. }
+              rewrite !dom_list_to_map_L. rewrite (fst_zip _ _ Hlen). rewrite (fst_zip _ _ Hlen2). reflexivity. }
             pose proof (trnsl_assertion_w_lexpr_subst proc_pre lexprs proc_args.*1 arg_vals stk_id mp u1 proc_frame_pre
               inv_map_wf pred_map_wf (proj1 Hspec_StackFree)
+              (proj1 (proc_spec_binders_not_in_lexpr_map_fvars proc_name _ _ H0))
+              (proj1 (proc_spec_binders_not_in_lexpr_map_fvars proc_name _ _ H0))
+              HfvA HdomEq
               Hlexprs_arg_vals Hproc_pre Hproc_frame_pre) as Himpl.
             iApply Himpl. iFrame.
           }
@@ -1381,10 +1392,21 @@ Section MainTranslation.
             iSplitR "Hq".
             { rewrite fresh_mp_rewrite_symb_stk_to_stk_frm_compat; try done. rewrite trnsl_lval_trnsl_val_inverse. iFrame. }
 
-            { pose proof (trnsl_assertion_w_lexpr_subst_r proc_post lexprs proc_args.*1 arg_vals lvar_x ret_val stk stk_id mp u proc_frame_post
+            { have HfvA : assertion_lexpr_fvars proc_post ⊆ dom (<["#ret_val":=LVar lvar_x]>(list_to_map (zip proc_args.*1 lexprs) : gmap lvar LExpr)).
+              { have Hfv := proj2 (proc_spec_lexpr_fvars_bounded proc_name _ H0).
+                have Hlen : length proc_args.*1 ≤ length lexprs. { have := Forall2_length _ _ _ Hlexprs_arg_vals. have := Forall2_length _ _ _ Harg_vals. have := @length_fmap _ _ fst proc_args. simpl in *. lia. }
+                rewrite dom_insert_L. rewrite dom_list_to_map_L. rewrite (fst_zip _ _ Hlen). exact Hfv. }
+              have HdomEq : dom (<["#ret_val":=LVar lvar_x]>(list_to_map (zip proc_args.*1 lexprs) : gmap lvar LExpr)) = dom (<["#ret_val":=LVal (trnsl_val ret_val)]>(list_to_map (zip proc_args.*1 (map (λ val : lang.val, LVal (trnsl_val val)) arg_vals)) : gmap lvar LExpr)).
+              { have Hlen : length proc_args.*1 ≤ length lexprs. { have := Forall2_length _ _ _ Hlexprs_arg_vals. have := Forall2_length _ _ _ Harg_vals. have := @length_fmap _ _ fst proc_args. simpl in *. lia. }
+                have Hlen2 : length proc_args.*1 ≤ length (map (λ val : lang.val, LVal (trnsl_val val)) arg_vals). { rewrite map_length. have := Forall2_length _ _ _ Harg_vals. have := @length_fmap _ _ fst proc_args. simpl in *. lia. }
+                rewrite !dom_insert_L. rewrite !dom_list_to_map_L. rewrite (fst_zip _ _ Hlen). rewrite (fst_zip _ _ Hlen2). reflexivity. }
+              pose proof (trnsl_assertion_w_lexpr_subst_r proc_post lexprs proc_args.*1 arg_vals lvar_x ret_val stk stk_id mp u proc_frame_post
                 inv_map_wf pred_map_wf (proj2 Hspec_StackFree)
+                (proj2 (proc_spec_binders_not_in_lexpr_map_fvars proc_name _ _ H0))
+                (proj2 (proc_spec_binders_not_in_lexpr_map_fvars proc_name _ _ H0))
+                HfvA HdomEq (fresh_lvar_not_in_lexpr_map_fvars_zip stk args lexprs proc_args.*1 lvar_x H2 H)
                 H Hlexprs_arg_vals Hpost Hproc_frame_post) as Himpl.
-            setoid_rewrite <- trnsl_assertion_unfold. iApply Himpl. iFrame. }
+              setoid_rewrite <- trnsl_assertion_unfold. iApply Himpl. iFrame. }
           }
         }
 
@@ -1465,8 +1487,19 @@ Section MainTranslation.
 
           {
             iFrame.
+            have HfvA : assertion_lexpr_fvars proc_pre ⊆ dom (list_to_map (zip proc_args.*1 lexprs) : gmap lvar LExpr).
+            { have Hfv := proj1 (proc_spec_lexpr_fvars_bounded proc_name _ H0).
+              have Hlen : length proc_args.*1 ≤ length lexprs. { have := Forall2_length _ _ _ HlocalsDef. have := Forall2_length _ _ _ Hlexprs_arg_vals. lia. }
+              rewrite dom_list_to_map_L. rewrite (fst_zip _ _ Hlen). exact Hfv. }
+            have HdomEq : dom (list_to_map (zip proc_args.*1 lexprs) : gmap lvar LExpr) = dom (list_to_map (zip proc_args.*1 (map (λ val : lang.val, LVal (trnsl_val val)) arg_vals)) : gmap lvar LExpr).
+            { have Hlen : length proc_args.*1 ≤ length lexprs. { have := Forall2_length _ _ _ HlocalsDef. have := Forall2_length _ _ _ Hlexprs_arg_vals. lia. }
+              have Hlen2 : length proc_args.*1 ≤ length (map (λ val : lang.val, LVal (trnsl_val val)) arg_vals). { rewrite map_length. have := Forall2_length _ _ _ HlocalsDef. lia. }
+              rewrite !dom_list_to_map_L. rewrite (fst_zip _ _ Hlen). rewrite (fst_zip _ _ Hlen2). reflexivity. }
             pose proof (trnsl_assertion_w_lexpr_subst proc_pre lexprs proc_args.*1 arg_vals stk_id mp u1 proc_frame_pre
               inv_map_wf pred_map_wf (proj1 Hspec_StackFree)
+              (proj1 (proc_spec_binders_not_in_lexpr_map_fvars proc_name _ _ H0))
+              (proj1 (proc_spec_binders_not_in_lexpr_map_fvars proc_name _ _ H0))
+              HfvA HdomEq
               Hlexprs_arg_vals Hproc_pre Hproc_frame_pre) as Himpl.
             iApply Himpl. iFrame.
           }
@@ -1490,10 +1523,21 @@ Section MainTranslation.
             iSplitR "Hq".
             { rewrite fresh_mp_rewrite_symb_stk_to_stk_frm_compat; try done. rewrite trnsl_lval_trnsl_val_inverse. iFrame. }
 
-            { pose proof (trnsl_assertion_w_lexpr_subst_r proc_post lexprs proc_args.*1 arg_vals lvar_x ret_val stk stk_id mp u proc_frame_post
+            { have HfvA : assertion_lexpr_fvars proc_post ⊆ dom (<["#ret_val":=LVar lvar_x]>(list_to_map (zip proc_args.*1 lexprs) : gmap lvar LExpr)).
+              { have Hfv := proj2 (proc_spec_lexpr_fvars_bounded proc_name _ H0).
+                have Hlen : length proc_args.*1 ≤ length lexprs. { have := Forall2_length _ _ _ Hlexprs_arg_vals. have := Forall2_length _ _ _ Harg_vals. have := @length_fmap _ _ fst proc_args. simpl in *. lia. }
+                rewrite dom_insert_L. rewrite dom_list_to_map_L. rewrite (fst_zip _ _ Hlen). exact Hfv. }
+              have HdomEq : dom (<["#ret_val":=LVar lvar_x]>(list_to_map (zip proc_args.*1 lexprs) : gmap lvar LExpr)) = dom (<["#ret_val":=LVal (trnsl_val ret_val)]>(list_to_map (zip proc_args.*1 (map (λ val : lang.val, LVal (trnsl_val val)) arg_vals)) : gmap lvar LExpr)).
+              { have Hlen : length proc_args.*1 ≤ length lexprs. { have := Forall2_length _ _ _ Hlexprs_arg_vals. have := Forall2_length _ _ _ Harg_vals. have := @length_fmap _ _ fst proc_args. simpl in *. lia. }
+                have Hlen2 : length proc_args.*1 ≤ length (map (λ val : lang.val, LVal (trnsl_val val)) arg_vals). { rewrite map_length. have := Forall2_length _ _ _ Harg_vals. have := @length_fmap _ _ fst proc_args. simpl in *. lia. }
+                rewrite !dom_insert_L. rewrite !dom_list_to_map_L. rewrite (fst_zip _ _ Hlen). rewrite (fst_zip _ _ Hlen2). reflexivity. }
+              pose proof (trnsl_assertion_w_lexpr_subst_r proc_post lexprs proc_args.*1 arg_vals lvar_x ret_val stk stk_id mp u proc_frame_post
                 inv_map_wf pred_map_wf (proj2 Hspec_StackFree)
+                (proj2 (proc_spec_binders_not_in_lexpr_map_fvars proc_name _ _ H0))
+                (proj2 (proc_spec_binders_not_in_lexpr_map_fvars proc_name _ _ H0))
+                HfvA HdomEq (fresh_lvar_not_in_lexpr_map_fvars_zip stk args lexprs proc_args.*1 lvar_x H2 H)
                 H Hlexprs_arg_vals Hpost Hproc_frame_post) as Himpl.
-            setoid_rewrite <- trnsl_assertion_unfold. iApply Himpl. iFrame. }
+              setoid_rewrite <- trnsl_assertion_unfold. iApply Himpl. iFrame. }
           }
 
         }
