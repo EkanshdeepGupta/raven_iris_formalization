@@ -61,8 +61,6 @@ Record RA_Pack := {
   RA_inst :> ResourceAlgebra RA_carrier;
 }.
 
-Global Axiom ra_eq_dec :  EqDecision RA_Pack .
-
 Parameter fld_set : gset lang.fld_name.
 
 Record fld := Fld { fld_name_val : fld_name; fld_typ : typ }.
