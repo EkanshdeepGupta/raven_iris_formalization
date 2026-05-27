@@ -34,7 +34,7 @@ Section lifting.
     iIntros (Φ) "[Hstk [Hl [%He %He2]]] HΦ" .
     iApply wp_lift_atomic_base_step_no_fork; first done.
     iIntros (σ ns κ κs nt) "Hstate". 
-    iDestruct "Hstate" as "[Hhp [Hproc Hstack]]".
+    iDestruct "Hstate" as "[Hhp [Hproc [Hstack %Hwf]]]".
     iPoseProof (stack_interp_agreement with "Hstack Hstk ") as "%HstkPure".
     iModIntro. iSplit. 
     - unfold base_reducible. 
@@ -66,6 +66,7 @@ Section lifting.
       assert (val = v0) as Hvsubst. 
         { apply (expr_step_val_unique _ _ _ _ He2 Hv0). } subst v0.
       
+      iPoseProof (heap_interp_agreement with "Hhp Hl") as "%HHeapPure".
       iCombine "Hhp Hl" as "Hcomb".
       iSplitR; first done.
       iPoseProof (own_update heap_heap_name _ _ (heap_update _ _ _ _ val) with "Hcomb") as "Hcomb".
@@ -73,7 +74,7 @@ Section lifting.
       iDestruct "Hcomb" as "[Hauth Hfrag]".
       iModIntro.
       iSplitL "Hauth".
-      + by iFrame.
+      + iFrame. iPureIntro. exact (state_wf_update_heap_overwrite _ _ _ _ _ HHeapPure Hwf).
       + iApply "HΦ". iFrame.
   Qed.
 
@@ -86,7 +87,7 @@ Section lifting.
     iIntros (Φ) "[Hstk %He] HΦ".
     iApply wp_lift_atomic_base_step_no_fork; first done.
     iIntros (σ ns κ κs nt) "Hstate".
-    iDestruct "Hstate" as "[Hhp [Hproc Hstack]]".
+    iDestruct "Hstate" as "[Hhp [Hproc [Hstack %Hwf]]]".
     iPoseProof (stack_interp_agreement with "Hstack Hstk") as "%HstkPure".
     iModIntro. iSplitR.
     - unfold base_reducible.
@@ -121,7 +122,8 @@ Section lifting.
       iModIntro. iFrame.
       replace (global_heap σ') with (global_heap σ) by (unfold σ', update_lvar; rewrite HstkPure; done).
       replace (procs σ') with (procs σ) by (unfold σ', update_lvar; rewrite HstkPure; done).
-      iFrame.
+      have Hwf' : state_wf σ' := state_wf_update_lvar σ v stk_id e0 Hwf.
+      iFrame. iFrame (Hwf').
 
       + iApply "HΦ". by iFrame.
   Qed.
@@ -135,7 +137,7 @@ Section lifting.
     iIntros (Φ) "[Hstk [%HexprStep HHeap]] HΦ".
     iApply wp_lift_atomic_base_step_no_fork; first done.
     iIntros (σ ns κ κs nt) "Hstate".
-    iDestruct "Hstate" as "[Hhp [Hproc Hstack]]".
+    iDestruct "Hstate" as "[Hhp [Hproc [Hstack %Hwf]]]".
     iPoseProof (stack_interp_agreement with "Hstack Hstk") as "%HstkPure".
     iPoseProof (heap_interp_agreement with "Hhp HHeap") as "%HHeapPure".
     iSplitR.
@@ -178,7 +180,8 @@ Section lifting.
       iModIntro. iFrame.
       replace (global_heap σ') with (global_heap σ) by (unfold σ', update_lvar; rewrite HstkPure; done).
       replace (procs σ') with (procs σ) by (unfold σ', update_lvar; rewrite HstkPure; done).
-      iFrame.
+      have Hwf_rd : state_wf σ' := state_wf_update_lvar σ x stk_id val Hwf.
+      iFrame. iFrame (Hwf_rd).
       iApply "HΦ". iFrame.
   Qed.
 
@@ -197,7 +200,7 @@ Section lifting.
     iIntros (Φ) "Hstk HΦ".
     iApply wp_lift_atomic_base_step_no_fork; first done.
     iIntros (σ ns κ κs nt) "Hstate".
-    iDestruct "Hstate" as "[Hhp [Hproc Hstack]]".
+    iDestruct "Hstate" as "[Hhp [Hproc [Hstack %Hwf]]]".
     iPoseProof (stack_interp_agreement with "Hstack Hstk") as "%HstkPure".
     iSplitR.
     - unfold base_reducible.
@@ -229,7 +232,7 @@ Section lifting.
       ) as "HHeapUpd".
 
       {
-        apply (heap_alloc_valid fs σ HNoDup).
+        apply (heap_alloc_valid fs σ HNoDup Hwf).
       }
 
       assert ((stack σ) = (stack σ')) as H0. {
@@ -262,10 +265,13 @@ Section lifting.
       - simpl. done.
       - simpl. unfold update_heap. simpl. apply IHfs. inversion HNoDup. done. }
       rewrite Hprocs. iFrame.
+      have Hwf_σ' : state_wf σ' := state_wf_alloc_step σ l fs eq_refl HNoDup Hwf.
+      have Hwf_alloc : state_wf σ'' := state_wf_update_lvar σ' x stk_id (LitLoc l) Hwf_σ'.
+      iFrame (Hwf_alloc).
       iApply "HΦ".
       iExists l. iFrame.
 
-      clear H H0 Hprocs.
+      clear H H0 Hprocs Hwf_σ' Hwf_alloc.
       iInduction fs as [| a fss'] "IHfs" forall (HNoDup).
       + simpl. iDestruct "HHp2" as "_". iPureIntro. done.
       + simpl in fs_heap_map.
@@ -309,7 +315,7 @@ Section lifting.
     iApply wp_lift_base_step; first done.
     iIntros (σ ns κ κs nt) "Hstate".
 
-    iDestruct "Hstate" as "[Hhp [Hproc Hstack]]".
+    iDestruct "Hstate" as "[Hhp [Hproc [Hstack %Hwf]]]".
     iApply fupd_mask_intro. { set_unfold. try done. }
     iIntros "Hemp".
   
@@ -324,7 +330,7 @@ Section lifting.
     inversion H; subst s0 σ0 κ s2 σ2 efs. iFrame.
     simpl. 
     iMod "Hemp". iModIntro.
-    iFrame.
+    iFrame. iFrame (Hwf).
     iApply ("Hs2" with "Hq"). iNext; iFrame.
   Qed.
 
@@ -354,7 +360,7 @@ Section lifting.
     iIntros (Φ) "[Hstk Hl] HΦ".
     iApply wp_lift_atomic_base_step_no_fork; first done.
     iIntros (σ ns κ κs nt) "Hstate".
-    iDestruct "Hstate" as "[Hhp [Hproc Hstack]]".
+    iDestruct "Hstate" as "[Hhp [Hproc [Hstack %Hwf]]]".
     iPoseProof (stack_interp_agreement with "Hstack Hstk") as "%HstkPure".
     iPoseProof (heap_interp_agreement with "Hhp Hl") as "%HHeapPure".
 
@@ -391,6 +397,10 @@ Section lifting.
         replace (stack (update_lvar σ' x stk_id (LitBool true))) with (stack (update_lvar σ x stk_id (LitBool true))) by
           (unfold update_lvar, σ'; simpl; rewrite HstkPure; done).
         iFrame "Hhp Hstack Hproc".
+        have Hwf_σ' : state_wf σ' := state_wf_update_heap_overwrite σ l fld v' v HHeapPure Hwf.
+        have Hwf_cas : state_wf (update_lvar σ' x stk_id (LitBool true)) :=
+          state_wf_update_lvar σ' x stk_id (LitBool true) Hwf_σ'.
+        iFrame (Hwf_cas).
         simpl. iApply "HΦ". iFrame.
 
       + rewrite HstkPure in H11. inversion H11; subst stk_frm0.
@@ -413,7 +423,7 @@ Section lifting.
 
     iApply wp_lift_atomic_base_step_no_fork; first done.
     iIntros (σ ns κ κs nt) "Hstate".
-    iDestruct "Hstate" as "[Hhp [Hproc Hstack]]".
+    iDestruct "Hstate" as "[Hhp [Hproc [Hstack %Hwf]]]".
     iPoseProof (stack_interp_agreement with "Hstack Hstk") as "%HstkPure".
     iPoseProof (heap_interp_agreement with "Hhp Hl") as "%HHeapPure".
 
@@ -449,6 +459,8 @@ Section lifting.
         replace (procs σ') with (procs σ) by
           (unfold σ', update_lvar; rewrite HstkPure; done).
         iFrame "Hhp Hstack Hproc".
+        have Hwf_fail : state_wf σ' := state_wf_update_lvar σ x stk_id (LitBool false) Hwf.
+        iFrame (Hwf_fail).
         simpl. iApply "HΦ". iFrame.
   Qed.
 
@@ -466,15 +478,15 @@ Section lifting.
           iApply wp_unfold.
     iIntros (σ ns κ κs nt) "Hstate".
 
-    iDestruct "Hstate" as "[Hhp [Hproc Hstack]]".
+    iDestruct "Hstate" as "[Hhp [Hproc [Hstack %Hwf]]]".
     iPoseProof (stack_interp_agreement with "Hstack Hstk") as "%HstkPure".
     
     iSpecialize ("Hhoare" $! Φ with "[Hstk Hp] HΦ"); iFrame.
       iPoseProof (wp_unfold with "Hhoare") as "Hhoare".
       unfold wp_pre.
       rewrite Hs1_val.
-      iSpecialize ("Hhoare" $! σ ns κ κs nt with "[Hhp Hproc Hstack]"); iFrame.
-      iDestruct "Hhoare" as ">[%Hred Hrest]".
+      iMod ("Hhoare" $! σ ns κ κs nt with "[Hhp Hproc Hstack]") as "[%Hred Hrest]".
+      { iFrame. iFrame (Hwf). }
       iModIntro.
       destruct Hred.
       destruct H as [e' [σ' [efs Hprim]]].
@@ -518,7 +530,7 @@ Section lifting.
     1: {
       iApply wp_lift_base_step; first done.
       iIntros (σ ns κ κs nt) "Hstate".
-          iDestruct "Hstate" as "[Hhp [Hproc Hstack]]".
+          iDestruct "Hstate" as "[Hhp [Hproc [Hstack %Hwf]]]".
     iPoseProof (stack_interp_agreement with "Hstack Hstk") as "%HstkPure".
     iApply fupd_mask_intro. { set_unfold. try done. }
 
@@ -550,10 +562,10 @@ Section lifting.
       
       }
 
-      2: { rewrite HstkPure in H8. inversion H8; subst. pose proof (expr_step_val_unique e stk_frm0 _ _ Hstp H9). inversion H; subst. iFrame. simpl in *. iFrame. }
+      2: { rewrite HstkPure in H8. inversion H8; subst. pose proof (expr_step_val_unique e stk_frm0 _ _ Hstp H9). inversion H; subst. iFrame. simpl in *. iFrame. iFrame (Hwf). }
 
       1: { rewrite HstkPure in H8. inversion H8; subst. pose proof (expr_step_val_unique e stk_frm0 _ _ Hstp H9). inversion H. }
-      
+
 
      }
   Qed.
@@ -573,15 +585,15 @@ Section lifting.
           iApply wp_unfold.
     iIntros (σ ns κ κs nt) "Hstate".
 
-    iDestruct "Hstate" as "[Hhp [Hproc Hstack]]".
+    iDestruct "Hstate" as "[Hhp [Hproc [Hstack %Hwf]]]".
     iPoseProof (stack_interp_agreement with "Hstack Hstk") as "%HstkPure".
     
     iSpecialize ("Hhoare" $! Φ with "[Hstk Hp] HΦ"); iFrame.
       iPoseProof (wp_unfold with "Hhoare") as "Hhoare".
       unfold wp_pre.
       rewrite Hs2_val.
-      iSpecialize ("Hhoare" $! σ ns κ κs nt with "[Hhp Hproc Hstack]"); iFrame.
-      iDestruct "Hhoare" as ">[%Hred Hrest]".
+      iMod ("Hhoare" $! σ ns κ κs nt with "[Hhp Hproc Hstack]") as "[%Hred Hrest]".
+      { iFrame. iFrame (Hwf). }
       iModIntro.
       destruct Hred.
       destruct H as [e' [σ' [efs Hprim]]].
@@ -625,7 +637,7 @@ Section lifting.
     1: {
       iApply wp_lift_base_step; first done.
       iIntros (σ ns κ κs nt) "Hstate".
-          iDestruct "Hstate" as "[Hhp [Hproc Hstack]]".
+          iDestruct "Hstate" as "[Hhp [Hproc [Hstack %Hwf]]]".
     iPoseProof (stack_interp_agreement with "Hstack Hstk") as "%HstkPure".
     iApply fupd_mask_intro. { set_unfold. try done. }
 
@@ -657,10 +669,10 @@ Section lifting.
       
       }
 
-      2: { rewrite HstkPure in H8. inversion H8; subst. pose proof (expr_step_val_unique e stk_frm0 _ _ Hstp H9). inversion H; subst. iFrame. simpl in *. iFrame. }
+      2: { rewrite HstkPure in H8. inversion H8; subst. pose proof (expr_step_val_unique e stk_frm0 _ _ Hstp H9). inversion H; subst. iFrame. simpl in *. iFrame. iFrame (Hwf). }
 
       1: { rewrite HstkPure in H8. inversion H8; subst. pose proof (expr_step_val_unique e stk_frm0 _ _ Hstp H9). inversion H. }
-      
+
 
      }
   Qed.
@@ -712,7 +724,7 @@ Section lifting.
 
     iApply wp_lift_base_step; first done.
     iIntros (σ1 ns κ κs nt) "Hstate".
-    iDestruct "Hstate" as "[Hhp [Hproc Hstack]]".
+    iDestruct "Hstate" as "[Hhp [Hproc [Hstack %Hwf]]]".
     iPoseProof (stack_interp_agreement with "Hstack Hstk") as "%HstkPure".
     iPoseProof (proc_tbl_interp_agreement with "Hproc Hproc_tbl") as "%HprocPure".
     iApply fupd_mask_intro. { set_solver. }
@@ -739,11 +751,17 @@ Section lifting.
     (* Freshness: the new stack id (Z.of_nat (Z.to_nat σ.(max_stack_id) + 1))
        must not yet be in the stack map.  This follows from the invariant that
        all allocated stack ids are ≤ max_stack_id, but that invariant is not
-       yet threaded through state_interp; admit it for now. *)
-    assert (Hfresh_new : stack σ !! Z.of_nat (Z.to_nat σ.(max_stack_id) + 1) = None) by apply max_stk_id_fresh.
+       yet threaded through state_interp; now proved from state_wf. *)
+    assert (Hfresh_new : stack σ !! Z.of_nat (Z.to_nat σ.(max_stack_id) + 1) = None) by (apply (max_stk_id_fresh _ Hwf)).
     iPoseProof ((stack_new_stk_frm_upd σ new_stk_frame Hfresh_new) with "Hstack") as ">[Hstack' Hstk']".
     
-    simpl; iFrame. iModIntro.
+    simpl; iFrame.
+    have Hwf_σ' : state_wf (fresh_stk_id σ).2 := state_wf_fresh_stk_id σ Hwf.
+    have Hle_call : (Z.of_nat (Z.to_nat σ.(max_stack_id) + 1) ≤ (fresh_stk_id σ).2.(max_stack_id))%Z.
+    { have := swf_max_stk_non_neg Hwf. unfold fresh_stk_id. simpl. lia. }
+    have Hwf_call : state_wf (update_stack (fresh_stk_id σ).2 (Z.to_nat σ.(max_stack_id) + 1) new_stk_frame) :=
+      state_wf_update_stack (fresh_stk_id σ).2 (Z.to_nat σ.(max_stack_id) + 1) new_stk_frame Hle_call Hwf_σ'.
+    iFrame (Hwf_call). iModIntro.
 
     iApply (wp_bind (fill_item (ActiveCallCtx x (Z.to_nat (max_stack_id σ) + 1) stk_id)) _ _ _ _).
     set stk_id' := (Z.to_nat (max_stack_id σ) + 1).
@@ -769,7 +787,7 @@ Section lifting.
     + clear H11 H12. iNext. simpl. iIntros "[Hstk'' [%Hret Hq]]". 
       iApply wp_lift_atomic_base_step_no_fork; first done.
       iIntros (σ1 ns0 κ κs0 nt0) "Hstate".
-      iDestruct "Hstate" as "[Hhp [Hproc Hstack]]".
+      iDestruct "Hstate" as "[Hhp [Hproc [Hstack %Hwf1]]]".
       iPoseProof (stack_interp_agreement with "Hstack Hstk") as "%HstkPure2".
       iPoseProof (stack_interp_agreement with "Hstack Hstk''") as "%HstkPure3".
       iPoseProof (stack_lvar_upd σ1 stk_id stk_frm x ret_val with "[Hstk Hstack ]" ) as "Hstk0"; [iFrame | ].
@@ -799,6 +817,8 @@ Section lifting.
        replace (procs σ') with (procs σ1) by
          (unfold σ', update_lvar; rewrite HstkPure2; done).
        iFrame "Hhp Hstack Hproc".
+       have Hwf_ret : state_wf σ' := state_wf_update_lvar σ1 x stk_id ret_val Hwf1.
+       iFrame (Hwf_ret).
        simpl. iApply "HΦ". iFrame.
   Qed.
 

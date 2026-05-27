@@ -41,6 +41,47 @@ Class heapG Σ := HeapG {
   heap_proctbl_name : gname;
 }.
 
+Definition state_wf (σ : state) : Prop :=
+  (0 ≤ σ.(max_stack_id))%Z ∧
+  (∀ k v, σ.(stack) !! k = Some v → (k ≤ σ.(max_stack_id))%Z) ∧
+  (∀ l f v, σ.(global_heap) !! heap_addr_constr l f = Some v →
+            (l.(loc_car) < Z.of_nat (size σ.(global_heap)))%Z).
+
+Definition swf_max_stk_non_neg {σ} (Hwf : state_wf σ) : (0 ≤ σ.(max_stack_id))%Z :=
+  proj1 Hwf.
+Definition swf_stk_bounded {σ} (Hwf : state_wf σ)
+    : ∀ k v, σ.(stack) !! k = Some v → (k ≤ σ.(max_stack_id))%Z :=
+  proj1 (proj2 Hwf).
+Definition swf_heap_bounded {σ} (Hwf : state_wf σ)
+    : ∀ l f v, σ.(global_heap) !! heap_addr_constr l f = Some v →
+               (l.(loc_car) < Z.of_nat (size σ.(global_heap)))%Z :=
+  proj2 (proj2 Hwf).
+
+Definition mk_state_wf σ
+    (Hnn : (0 ≤ σ.(max_stack_id))%Z)
+    (Hbnd : ∀ k v, σ.(stack) !! k = Some v → (k ≤ σ.(max_stack_id))%Z)
+    (Hhb : ∀ l f v, σ.(global_heap) !! heap_addr_constr l f = Some v →
+                    (l.(loc_car) < Z.of_nat (size σ.(global_heap)))%Z) :
+    state_wf σ := conj Hnn (conj Hbnd Hhb).
+
+Lemma fresh_loc_is_fresh (h : heap) (fld : fld_name)
+    (Hwf : ∀ l f v, h !! heap_addr_constr l f = Some v → (l.(loc_car) < Z.of_nat (size h))%Z) :
+    h !! heap_addr_constr (fresh_loc h) fld = None.
+Proof.
+  destruct (h !! heap_addr_constr (fresh_loc h) fld) eqn:Habs; [| done].
+  exfalso. have := Hwf (fresh_loc h) fld v Habs. unfold fresh_loc. simpl. lia.
+Qed.
+
+Lemma max_stk_id_fresh (σ : state) (Hwf : state_wf σ) :
+    σ.(stack) !! Z.of_nat (Z.to_nat σ.(max_stack_id) + 1) = None.
+Proof.
+  destruct (σ.(stack) !! Z.of_nat (Z.to_nat σ.(max_stack_id) + 1)) eqn:Habs; [| done].
+  exfalso.
+  have Hbnd := swf_stk_bounded Hwf _ _ Habs.
+  have Hnn := swf_max_stk_non_neg Hwf.
+  lia.
+Qed.
+
 Section definitions.
   Context `{!heapG Σ}.
 
@@ -68,7 +109,7 @@ Section definitions.
     own heap_stack_name (● (to_stackR stack)).
 
   Definition state_interp (σ : state) : iProp Σ :=
-  heap_interp σ.(global_heap) ∗ proc_tbl_interp σ.(procs) ∗ stack_interp σ.(stack).
+  heap_interp σ.(global_heap) ∗ proc_tbl_interp σ.(procs) ∗ stack_interp σ.(stack) ∗ ⌜state_wf σ⌝.
 
 
   Definition heap_maps_to (l : loc) (fld : fld_name) (q : Qp) (v : val) :=
@@ -272,8 +313,6 @@ Section updates.
     iModIntro. iFrame.
   Qed.
 
-  Axiom fresh_loc_is_fresh : ∀ (h : heap) (fld : fld_name), h !! heap_addr_constr (fresh_loc h) fld = None.
-
   Lemma foldr_update_heap_not_mem (l : loc) (fld : fld_name) (fss : list (fld_name * val)) (σ : state) :
     fld ∉ fss.*1 →
     global_heap σ !! heap_addr_constr l fld = None →
@@ -309,6 +348,7 @@ Section updates.
   Lemma heap_alloc_valid :
     ∀ fs σ,
     NoDup fs.*1 →
+    state_wf σ →
     let l := fresh_loc (global_heap σ) in
     let σ' := fold_right
         (λ f_v acc ,
@@ -321,15 +361,15 @@ Section updates.
   Proof.
     induction fs as [ | fs fss IH].
 
-    - intros σ HNoDup l σ' fs_heap_map. simpl in fs_heap_map. subst fs_heap_map.
+    - intros σ HNoDup Hwf l σ' fs_heap_map. simpl in fs_heap_map. subst fs_heap_map.
       simpl in σ'. subst σ'. unfold to_heapUR. rewrite fmap_empty. apply auth_update_alloc.
       have Heq : ucmra_unit heapUR = (∅ : gmapUR heap_addr heap_cellR). { done. }
       rewrite Heq. done.
 
-    - intros σ HNoDup l σ' fs_heap_map. simpl in fs_heap_map.
+    - intros σ HNoDup Hwf l σ' fs_heap_map. simpl in fs_heap_map.
       simpl in σ'.
       inversion HNoDup as [| ? ? H_NotIn H_NoDup'].
-      specialize (IH σ H_NoDup').
+      specialize (IH σ H_NoDup' Hwf).
       unfold l in IH.
       rewrite IH.
       unfold σ', fs_heap_map. unfold update_heap. simpl.
@@ -338,11 +378,132 @@ Section updates.
       rewrite fmap_insert. rewrite fmap_insert.
       apply alloc_local_update.
       { rewrite lookup_fmap.
-        rewrite (foldr_update_heap_not_mem l fs.1 fss σ H_NotIn (fresh_loc_is_fresh _ _)).
+        rewrite (foldr_update_heap_not_mem l fs.1 fss σ H_NotIn
+                   (fresh_loc_is_fresh _ _ (swf_heap_bounded Hwf))).
         done. }
       { unfold to_heap_cellR. apply pair_valid. done. }
   Qed.
 
+  Lemma heap_size_insert_le (m : heap) k v :
+      size m ≤ size (<[k:=v]> m).
+  Proof.
+    destruct (m !! k) eqn:Hk.
+    - have Heq : size (<[k:=v]> m) = size m.
+      { apply map_size_insert_Some. exists v0. exact Hk. }
+      lia.
+    - have Heq : size (<[k:=v]> m) = S (size m).
+      { apply map_size_insert_None. exact Hk. }
+      lia.
+  Qed.
+
+  Lemma state_wf_update_heap_overwrite (σ : state) (l : loc) (fld : fld_name) (v old_v : val)
+      (Hpresent : lookup_heap σ l fld = Some old_v)
+      (Hwf : state_wf σ) :
+      state_wf (update_heap σ l fld v).
+  Proof.
+    unfold lookup_heap in Hpresent.
+    apply mk_state_wf.
+    - exact (swf_max_stk_non_neg Hwf).
+    - exact (swf_stk_bounded Hwf).
+    - intros l' f' v' Hlookup. simpl in Hlookup.
+      have Hsize : size (<[heap_addr_constr l fld := v]> σ.(global_heap)) = size σ.(global_heap).
+      { apply map_size_insert_Some. exists old_v. exact Hpresent. }
+      rewrite Hsize.
+      destruct (decide (heap_addr_constr l' f' = heap_addr_constr l fld)) as [Heq | Hne].
+      + injection Heq as HL HF. subst l'. subst f'.
+        exact (swf_heap_bounded Hwf l fld old_v Hpresent).
+      + rewrite lookup_insert_ne in Hlookup; [| by intro Heq'; apply Hne; symmetry].
+        exact (swf_heap_bounded Hwf l' f' v' Hlookup).
+  Qed.
+
+  Lemma state_wf_update_lvar (σ : state) (x : var) (stk_id : stack_id) (v : val)
+      (Hwf : state_wf σ) :
+      state_wf (update_lvar σ x stk_id v).
+  Proof.
+    unfold update_lvar.
+    destruct (σ.(stack) !! stk_id) eqn:Hlookup.
+    - apply mk_state_wf.
+      + exact (swf_max_stk_non_neg Hwf).
+      + simpl. intros k vk Hk.
+        destruct (decide (k = stk_id)) as [-> | Hne].
+        * exact (swf_stk_bounded Hwf stk_id s Hlookup).
+        * rewrite lookup_insert_ne in Hk; [| by intro H; exact (Hne (eq_sym H))].
+          exact (swf_stk_bounded Hwf k vk Hk).
+      + exact (swf_heap_bounded Hwf).
+    - exact Hwf.
+  Qed.
+
+  Lemma foldr_heap_size_le (σ : state) (l : loc) (fs : list (fld_name * val)) :
+      size σ.(global_heap) ≤
+      size (global_heap (foldr (fun f_v acc => update_heap acc l f_v.1 f_v.2) σ fs)).
+  Proof.
+    induction fs as [| [f v] fs' IH].
+    - simpl. lia.
+    - simpl. etransitivity; [exact IH | apply heap_size_insert_le].
+  Qed.
+
+  Lemma state_wf_alloc_step (σ : state) (l : loc) (fs : list (fld_name * val))
+      (Hl : l = fresh_loc σ.(global_heap))
+      (HNoDup : NoDup fs.*1)
+      (Hwf : state_wf σ) :
+      state_wf (foldr (fun f_v acc => update_heap acc l f_v.1 f_v.2) σ fs).
+  Proof.
+    induction fs as [| [f v] fs' IH].
+    - simpl. exact Hwf.
+    - simpl.
+      simpl in HNoDup.
+      have H_NotIn : f ∉ fs'.*1 := NoDup_cons_1_1 _ _ HNoDup.
+      have H_NoDup' : NoDup fs'.*1 := NoDup_cons_1_2 _ _ HNoDup.
+      specialize (IH H_NoDup').
+      have Hge := foldr_heap_size_le σ l fs'.
+      set σ0 := foldr (fun f_v acc => update_heap acc l f_v.1 f_v.2) σ fs'.
+      fold σ0 in IH, Hge.
+      have H_not_mem : σ0.(global_heap) !! heap_addr_constr l f = None.
+      { apply (foldr_update_heap_not_mem l f fs' σ H_NotIn).
+        rewrite Hl. apply (fresh_loc_is_fresh _ _ (swf_heap_bounded Hwf)). }
+      apply mk_state_wf.
+      + exact (swf_max_stk_non_neg IH).
+      + exact (swf_stk_bounded IH).
+      + intros l' f' v' Hlookup. simpl in Hlookup.
+        have Hsize : size (<[heap_addr_constr l f := v]> σ0.(global_heap)) =
+                     S (size σ0.(global_heap)).
+        { apply map_size_insert_None. exact H_not_mem. }
+        rewrite Hsize.
+        destruct (decide (heap_addr_constr l' f' = heap_addr_constr l f)) as [Heq | Hne].
+        * injection Heq as HL HF. subst l'. subst f'.
+          have Hlcar : l.(loc_car) = Z.of_nat (size σ.(global_heap)).
+          { rewrite Hl. unfold fresh_loc. reflexivity. }
+          rewrite Hlcar. lia.
+        * rewrite lookup_insert_ne in Hlookup; [| by intro H; exact (Hne (eq_sym H))].
+          have := swf_heap_bounded IH l' f' v' Hlookup. lia.
+  Qed.
+
+  Lemma state_wf_fresh_stk_id (σ : state) (Hwf : state_wf σ) :
+      state_wf (fresh_stk_id σ).2.
+  Proof.
+    unfold fresh_stk_id. simpl.
+    apply mk_state_wf.
+    - simpl. have := swf_max_stk_non_neg Hwf. lia.
+    - simpl. intros k v Hlookup.
+      have := swf_stk_bounded Hwf k v Hlookup.
+      have := swf_max_stk_non_neg Hwf. lia.
+    - simpl. exact (swf_heap_bounded Hwf).
+  Qed.
+
+  Lemma state_wf_update_stack (σ : state) (stk_id : stack_id) (frame : stack_frame)
+      (Hid : (stk_id ≤ σ.(max_stack_id))%Z)
+      (Hwf : state_wf σ) :
+      state_wf (update_stack σ stk_id frame).
+  Proof.
+    unfold update_stack. apply mk_state_wf.
+    - exact (swf_max_stk_non_neg Hwf).
+    - simpl. intros k vk Hk.
+      destruct (decide (k = stk_id)) as [-> | Hne].
+      + exact Hid.
+      + rewrite lookup_insert_ne in Hk; [| by intro H; exact (Hne (eq_sym H))].
+        exact (swf_stk_bounded Hwf k vk Hk).
+    - exact (swf_heap_bounded Hwf).
+  Qed.
+
 End updates.
 
-Axiom max_stk_id_fresh : ∀ (σ : state), σ.(stack) !! Z.of_nat (Z.to_nat σ.(max_stack_id) + 1) = None.

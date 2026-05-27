@@ -50,9 +50,6 @@ Class ResourceAlgebra (A: Type) := {
   valid : A -> Prop;
   fpuValid : A -> A -> Prop;
   fpuAxiom : forall x y, fpuValid x y -> valid x /\ valid y /\ forall c, (valid (comp x c) -> valid (comp y c));
-  (* RA Axioms *)
-  (* ra_ucmra : ucmra; *)
-  (* ra_ucmra_map : A -> ra_ucmra; *)
 }.
 
 Global Declare Instance RAEq : forall A: Type, EqDecision (ResourceAlgebra A).
@@ -412,13 +409,13 @@ Record InvRecord := Inv {
    so substitution commutes with argument substitution. *)
 Definition InvBodyWF (r : InvRecord) : Prop :=
   forall (args : list LExpr) (M : gmap var LExpr),
+    length args = length r.(inv_args) →
     subst (r.(inv_body))
       (list_to_map (zip (r.(inv_args)) (map (fun e => lexpr_subst e M) args))) =
     subst (subst (r.(inv_body))
       (list_to_map (zip (r.(inv_args)) args))) M.
 
 Global Parameter inv_map : gmap inv_name InvRecord.
-(* Axiom inv_map_set : dom inv_map = inv_set. *)
 
 Record PredRecord := Pred {
   pred_args: list var;
@@ -428,13 +425,13 @@ Record PredRecord := Pred {
 (* Well-formedness: analogous condition for predicate bodies. *)
 Definition PredBodyWF (r : PredRecord) : Prop :=
   forall (args : list LExpr) (M : gmap var LExpr),
+    length args = length r.(pred_args) →
     subst (r.(pred_body))
       (list_to_map (zip (r.(pred_args)) (map (fun e => lexpr_subst e M) args))) =
     subst (subst (r.(pred_body))
       (list_to_map (zip (r.(pred_args)) args))) M.
 
 Global Parameter pred_map : gmap pred_name PredRecord.
-(* Axiom pred_map_set : dom pred_map = pred_set. *)
 
 Inductive StackFree : assertion → Prop :=
 | SF_Proc proc_name proc_entry :
@@ -462,19 +459,17 @@ Inductive StackFree : assertion → Prop :=
     StackFree (LAnd a1 a2)
 | SF_Inv inv_name args inv_record :
     inv_map !! inv_name = Some inv_record →
+    length args = length inv_record.(inv_args) →
     StackFree (subst (inv_record.(inv_body)) (list_to_map (zip inv_record.(inv_args) args))) →
     StackFree (LInv inv_name args)
 | SF_Pred pred_name args pred_record :
     pred_map !! pred_name = Some pred_record →
+    length args = length pred_record.(pred_args) →
     StackFree (subst (pred_record.(pred_body)) (list_to_map (zip pred_record.(pred_args) args))) →
     StackFree (LPred pred_name args).
 
 Global Parameter proc_map : gmap proc_name ProcRecord.
 
-Axiom proc_args_unique : map_Forall (λ proc proc_entry, NoDup (proc_args_of proc_entry).*1 ) proc_map.
-
-Axiom proc_spec_stack_free :
-  map_Forall (λ proc proc_entry, StackFree (proc_precond_of proc_entry) /\ StackFree (proc_postcond_of proc_entry) ) proc_map.
 
 (* LExists binder variables of an assertion (does NOT descend into LInv/LPred bodies) *)
 Fixpoint assertion_exists_binders (a : assertion) : gset lvar :=
@@ -511,45 +506,175 @@ Proof.
   - rewrite IHa1 IHa2. reflexivity.
 Qed.
 
-(* Well-formedness axioms for inv/pred bodies and proc specs.
-   These are conditions on the specific program being verified:
-   - inv/pred body LExpr fvars are exactly the named arguments (well-scoped bodies)
-   - LExists binders in inv/pred/proc bodies are disjoint from translation map fvars
-   - proc spec LExpr fvars are bounded by the named argument variables *)
+(* Substitution composes: if all fvars of e are in dom σ, then substituting
+   via (fmap (fun e => lexpr_subst e M) σ) equals substituting σ then M. *)
+Lemma lexpr_subst_compose (e : LExpr) (σ M : gmap var LExpr) :
+  lexpr_fvars e ⊆ dom σ →
+  lexpr_subst e (fmap (fun e' => lexpr_subst e' M) σ) = lexpr_subst (lexpr_subst e σ) M.
+Proof.
+  induction e; simpl; intro Hfv.
+  - (* LVar x *)
+    have Hx : x ∈ dom σ. { set_solver. }
+    apply elem_of_dom in Hx as [ex Hx].
+    rewrite lookup_fmap Hx /=. done.
+  - done.
+  - have := IHe Hfv. congruence.
+  - have H1 := IHe1 ltac:(set_solver). have H2 := IHe2 ltac:(set_solver). congruence.
+  - have H1 := IHe1 ltac:(set_solver). have H2 := IHe2 ltac:(set_solver).
+    have H3 := IHe3 ltac:(set_solver). congruence.
+  - done.
+Qed.
 
-Axiom inv_body_subst_fvars_wf :
-  ∀ (inv_nm : inv_name) (r : InvRecord) (args : list LExpr),
-    inv_map !! inv_nm = Some r →
-    assertion_lexpr_fvars (subst (r.(inv_body)) (list_to_map (zip (r.(inv_args)) args))) ⊆
-      ⋃ (lexpr_fvars <$> args).
+(* Zipping keys with a mapped list equals fmapping the list_to_map. *)
+Lemma list_to_map_zip_fmap (ks : list var) (vs : list LExpr) (M : gmap var LExpr) :
+  (list_to_map (zip ks (map (fun e => lexpr_subst e M) vs)) : gmap var LExpr) =
+  fmap (fun e => lexpr_subst e M) (list_to_map (zip ks vs) : gmap var LExpr).
+Proof.
+  revert vs. induction ks as [| k ks' IH]; intro vs.
+  - done.
+  - destruct vs as [| v vs']; [done |].
+    simpl. rewrite IH fmap_insert. done.
+Qed.
 
-Axiom pred_body_subst_fvars_wf :
-  ∀ (pred_nm : pred_name) (r : PredRecord) (args : list LExpr),
-    pred_map !! pred_nm = Some r →
-    assertion_lexpr_fvars (subst (r.(pred_body)) (list_to_map (zip (r.(pred_args)) args))) ⊆
-      ⋃ (lexpr_fvars <$> args).
+(* When lengths match, dom of list_to_map(zip) equals list_to_set of keys. *)
+Lemma dom_list_to_map_zip (args : list var) (vals : list LExpr) :
+  length args = length vals →
+  dom (list_to_map (zip args vals) : gmap var LExpr) = list_to_set args.
+Proof.
+  revert vals. induction args as [| a args' IH]; intros vals Hlen.
+  - done.
+  - destruct vals as [| v vals']; [simpl in Hlen; lia |].
+    simpl. rewrite dom_insert_L IH; [done | simpl in Hlen; lia].
+Qed.
 
-Axiom inv_body_binders_not_in_lexpr_map_fvars :
-  ∀ (inv_nm : inv_name) (r : InvRecord) (M : gmap lvar LExpr),
-    inv_map !! inv_nm = Some r →
-    assertion_exists_binders (r.(inv_body)) ## lexpr_map_fvars M.
+(* Assertion substitution composes: if all lvar fvars of a are in dom σ, then
+   subst a (fmap (fun e => lexpr_subst e M) σ) = subst (subst a σ) M. *)
+Lemma assertion_subst_compose (a : assertion) (σ M : gmap var LExpr) :
+  assertion_lexpr_fvars a ⊆ dom σ →
+  subst a (fmap (fun e => lexpr_subst e M) σ) = subst (subst a σ) M.
+Proof.
+  induction a; simpl; intro Hfv; try done.
+  - f_equal. apply lexpr_subst_compose. exact Hfv.
+  - f_equal. apply lexpr_subst_compose. exact Hfv.
+  - f_equal. apply lexpr_subst_compose. exact Hfv.
+  - f_equal. apply IHa. exact Hfv.
+  - f_equal. apply IHa. exact Hfv.
+  - f_equal; [apply lexpr_subst_compose | apply IHa]; set_solver.
+  - (* LInv *) f_equal. rewrite map_map. apply Forall_fmap_ext_1.
+    apply Forall_forall. intros e He.
+    apply lexpr_subst_compose.
+    have Hsub : lexpr_fvars e ⊆ ⋃ (lexpr_fvars <$> args). {
+      intros x Hx. apply elem_of_union_list. exists (lexpr_fvars e).
+      split; [apply elem_of_list_fmap; exists e; split; [done | exact He] | exact Hx].
+    }
+    set_solver.
+  - (* LPred *) f_equal. rewrite map_map. apply Forall_fmap_ext_1.
+    apply Forall_forall. intros e He.
+    apply lexpr_subst_compose.
+    have Hsub : lexpr_fvars e ⊆ ⋃ (lexpr_fvars <$> args). {
+      intros x Hx. apply elem_of_union_list. exists (lexpr_fvars e).
+      split; [apply elem_of_list_fmap; exists e; split; [done | exact He] | exact Hx].
+    }
+    set_solver.
+  - f_equal; [apply IHa1 | apply IHa2]; set_solver.
+Qed.
 
-Axiom pred_body_binders_not_in_lexpr_map_fvars :
-  ∀ (pred_nm : pred_name) (r : PredRecord) (M : gmap lvar LExpr),
-    pred_map !! pred_nm = Some r →
-    assertion_exists_binders (r.(pred_body)) ## lexpr_map_fvars M.
+(* InvBodyWF follows from the simple well-scopedness condition. *)
+Lemma inv_body_wf_from_scoped (r : InvRecord) :
+  assertion_lexpr_fvars r.(inv_body) ⊆ list_to_set r.(inv_args) →
+  InvBodyWF r.
+Proof.
+  intros Hscoped args M Hlen.
+  have Hdom : dom (list_to_map (zip r.(inv_args) args) : gmap var LExpr) = list_to_set r.(inv_args).
+  { apply dom_list_to_map_zip. lia. }
+  have Hfv : assertion_lexpr_fvars r.(inv_body) ⊆ dom (list_to_map (zip r.(inv_args) args) : gmap var LExpr).
+  { rewrite Hdom. exact Hscoped. }
+  rewrite list_to_map_zip_fmap.
+  exact (assertion_subst_compose r.(inv_body) _ M Hfv).
+Qed.
 
-Axiom proc_spec_binders_not_in_lexpr_map_fvars :
-  ∀ (proc_nm : proc_name) (r : ProcRecord) (M : gmap lvar LExpr),
-    proc_map !! proc_nm = Some r →
-    assertion_exists_binders (proc_precond_of r) ## lexpr_map_fvars M ∧
-    assertion_exists_binders (proc_postcond_of r) ## lexpr_map_fvars M.
+(* PredBodyWF follows from the simple well-scopedness condition. *)
+Lemma pred_body_wf_from_scoped (r : PredRecord) :
+  assertion_lexpr_fvars r.(pred_body) ⊆ list_to_set r.(pred_args) →
+  PredBodyWF r.
+Proof.
+  intros Hscoped args M Hlen.
+  have Hdom : dom (list_to_map (zip r.(pred_args) args) : gmap var LExpr) = list_to_set r.(pred_args).
+  { apply dom_list_to_map_zip. lia. }
+  have Hfv : assertion_lexpr_fvars r.(pred_body) ⊆ dom (list_to_map (zip r.(pred_args) args) : gmap var LExpr).
+  { rewrite Hdom. exact Hscoped. }
+  rewrite list_to_map_zip_fmap.
+  exact (assertion_subst_compose r.(pred_body) _ M Hfv).
+Qed.
 
-Axiom proc_spec_lexpr_fvars_bounded :
-  ∀ (proc_nm : proc_name) (r : ProcRecord),
-    proc_map !! proc_nm = Some r →
-    assertion_lexpr_fvars (proc_precond_of r) ⊆ list_to_set ((proc_args_of r).*1) ∧
-    assertion_lexpr_fvars (proc_postcond_of r) ⊆ {["#ret_val"]} ∪ list_to_set ((proc_args_of r).*1).
+(* Mapping from invariant names to Iris namespaces, supplied by the user. *)
+Parameter inv_namespace_map : inv_name -> namespace.
+
+(* Well-formedness predicate for a program (proc_map, inv_map, pred_map).
+   Bundles all structural side-conditions required by the translation theorem.
+   A user of rrl_validity must supply one ProgramWF witness for their concrete program. *)
+Record ProgramWF : Prop := {
+  (* ── Procedure map ───────────────────────────────────────────────────── *)
+  (* Argument names of every procedure are distinct. *)
+  pwf_proc_args_unique :
+    map_Forall (λ _ r, NoDup (proc_args_of r).*1) proc_map;
+
+  (* Pre- and postconditions of every procedure are stack-free. *)
+  pwf_proc_stack_free :
+    map_Forall (λ _ r,
+      StackFree (proc_precond_of r) ∧ StackFree (proc_postcond_of r)) proc_map;
+
+  (* LExpr free variables in pre/post are bounded by the formal argument names. *)
+  pwf_proc_fvars_bounded :
+    map_Forall (λ _ r,
+      assertion_lexpr_fvars (proc_precond_of r) ⊆ list_to_set (proc_args_of r).*1 ∧
+      assertion_lexpr_fvars (proc_postcond_of r) ⊆ {["#ret_val"]} ∪ list_to_set (proc_args_of r).*1) proc_map;
+
+  (* LExists binders in pre/post are disjoint from the free vars of any lexpr map. *)
+  pwf_proc_binders_fresh :
+    ∀ proc_nm r M, proc_map !! proc_nm = Some r →
+      assertion_exists_binders (proc_precond_of r) ## lexpr_map_fvars M ∧
+      assertion_exists_binders (proc_postcond_of r) ## lexpr_map_fvars M;
+
+  (* ── Invariant map ───────────────────────────────────────────────────── *)
+  (* LExpr fvars of an invariant body are bounded by its formal argument names. *)
+  pwf_inv_fvars_scoped :
+    map_Forall (λ _ r, assertion_lexpr_fvars r.(inv_body) ⊆ list_to_set r.(inv_args)) inv_map;
+
+  (* LExpr fvars of a substituted invariant body are bounded by the argument fvars. *)
+  pwf_inv_fvars_bounded :
+    ∀ inv_nm r args, inv_map !! inv_nm = Some r →
+      assertion_lexpr_fvars (subst r.(inv_body) (list_to_map (zip r.(inv_args) args))) ⊆
+        ⋃ (lexpr_fvars <$> args);
+
+  (* LExists binders in an invariant body are disjoint from any lexpr map's fvars. *)
+  pwf_inv_binders_fresh :
+    ∀ inv_nm r M, inv_map !! inv_nm = Some r →
+      assertion_exists_binders r.(inv_body) ## lexpr_map_fvars M;
+
+  (* ── Predicate map ───────────────────────────────────────────────────── *)
+  (* LExpr fvars of a predicate body are bounded by its formal argument names. *)
+  pwf_pred_fvars_scoped :
+    map_Forall (λ _ r, assertion_lexpr_fvars r.(pred_body) ⊆ list_to_set r.(pred_args)) pred_map;
+
+  (* LExpr fvars of a substituted predicate body are bounded by the argument fvars. *)
+  pwf_pred_fvars_bounded :
+    ∀ pred_nm r args, pred_map !! pred_nm = Some r →
+      assertion_lexpr_fvars (subst r.(pred_body) (list_to_map (zip r.(pred_args) args))) ⊆
+        ⋃ (lexpr_fvars <$> args);
+
+  (* LExists binders in a predicate body are disjoint from any lexpr map's fvars. *)
+  pwf_pred_binders_fresh :
+    ∀ pred_nm r M, pred_map !! pred_nm = Some r →
+      assertion_exists_binders r.(pred_body) ## lexpr_map_fvars M;
+
+  (* ── Invariant namespaces ─────────────────────────────────────────────── *)
+  (* Namespaces assigned to invariants are pairwise disjoint. *)
+  pwf_inv_namespace_disjoint :
+    ∀ inv1 inv2 : inv_name,
+      inv1 ∈ inv_set → inv2 ∈ inv_set →
+        (inv_namespace_map inv1) ## (inv_namespace_map inv2);
+}.
 
 (* Type inference for expressions---placed here so expr_well_defined can use it. *)
 Definition typeOf (v: lang.val) : typ :=
@@ -695,10 +820,6 @@ Proof.
 Qed.
 
 Section AtomicAnnotations.
-  Parameter inv_namespace_map : inv_name -> namespace.
-
-  Axiom inv_namespace_disjoint : forall inv1 inv2 : inv_name, inv1 ∈ inv_set -> inv2 ∈ inv_set -> (inv_namespace_map inv1) ## (inv_namespace_map inv2).
-
   Inductive AtomicStep : Type :=
   | Closed
   | Opened (S : list (inv_name * list LExpr))
@@ -2499,8 +2620,7 @@ Section AssertionsProperties.
      - spec LExpr fvars ⊆ dom M1
      - spec LExists binders ∉ lexpr_map_fvars M1 ∪ M2 *)
   Lemma trnsl_assertion_subst_congr
-    (Hinv_wf : ∀ inv r, inv_map !! inv = Some r → InvBodyWF r)
-    (Hpred_wf : ∀ pred r, pred_map !! pred = Some r → PredBodyWF r)
+    (Hwf : ProgramWF)
     (a : assertion) (M1 M2 : gmap lvar LExpr) stk_id (mp1 mp2 : symb_map) :
     StackFree a →
     assertion_exists_binders a ## lexpr_map_fvars M1 →
@@ -2614,42 +2734,42 @@ Section AssertionsProperties.
         * apply bi.pure_proper. unfold LExpr_holds.
           rewrite (interp_lexpr_lexpr_subst_eval_lvar_congr_dom cond M1' M2' mp1' mp2' Hfv_cond Hbase'). tauto.
         * exact (IHa0 M1' M2' stk_id' mp1' mp2' H0 HbA1 HbA2 Hfv_body HdomEq' Hstab' Hbase').
-      + (* LInv: use InvBodyWF to rewrite, then apply fixpoint IH *)
+      + (* LInv: prove InvBodyWF from scoped condition, use it to rewrite *)
         destruct (inv_map !! inv_name0) as [r|] eqn:Hr.
         2: { simpl. rewrite Hr. reflexivity. }
-        have Hwf := Hinv_wf inv_name0 r Hr.
+        have HinvBodyWF := inv_body_wf_from_scoped r (Hwf.(pwf_inv_fvars_scoped) inv_name0 r Hr).
         inversion Hsf. rewrite Hr in H1. inversion H1. subst inv_record.
         simpl. rewrite Hr.
-        rewrite (Hwf args M1'); rewrite (Hwf args M2').
+        rewrite (HinvBodyWF args M1' H2); rewrite (HinvBodyWF args M2' H2).
         f_equiv.
         apply (IH (subst r.(inv_body) (list_to_map (zip r.(inv_args) args)))
-          M1' M2' stk_id' mp1' mp2' H2).
+          M1' M2' stk_id' mp1' mp2' H3).
         * rewrite assertion_exists_binders_subst.
-          exact (inv_body_binders_not_in_lexpr_map_fvars inv_name0 r M1' Hr).
+          exact (Hwf.(pwf_inv_binders_fresh) inv_name0 r M1' Hr).
         * rewrite assertion_exists_binders_subst.
-          exact (inv_body_binders_not_in_lexpr_map_fvars inv_name0 r M2' Hr).
+          exact (Hwf.(pwf_inv_binders_fresh) inv_name0 r M2' Hr).
         * etransitivity.
-          { exact (inv_body_subst_fvars_wf inv_name0 r args Hr). }
+          { exact (Hwf.(pwf_inv_fvars_bounded) inv_name0 r args Hr). }
           { exact HfvA'. }
         * exact HdomEq'.
         * exact Hstab'.
         * exact Hbase'.
-      + (* LPred: use PredBodyWF to rewrite, then apply fixpoint IH *)
+      + (* LPred: prove PredBodyWF from scoped condition, use it to rewrite *)
         destruct (pred_map !! pred_name0) as [r|] eqn:Hr.
         2: { simpl. rewrite Hr. reflexivity. }
-        have Hwf := Hpred_wf pred_name0 r Hr.
+        have HPredBodyWF := pred_body_wf_from_scoped r (Hwf.(pwf_pred_fvars_scoped) pred_name0 r Hr).
         inversion Hsf. rewrite Hr in H1. inversion H1. subst pred_record.
         simpl. rewrite Hr.
-        rewrite (Hwf args M1'); rewrite (Hwf args M2').
+        rewrite (HPredBodyWF args M1' H2); rewrite (HPredBodyWF args M2' H2).
         f_equiv.
         apply (IH (subst r.(pred_body) (list_to_map (zip r.(pred_args) args)))
-          M1' M2' stk_id' mp1' mp2' H2).
+          M1' M2' stk_id' mp1' mp2' H3).
         * rewrite assertion_exists_binders_subst.
-          exact (pred_body_binders_not_in_lexpr_map_fvars pred_name0 r M1' Hr).
+          exact (Hwf.(pwf_pred_binders_fresh) pred_name0 r M1' Hr).
         * rewrite assertion_exists_binders_subst.
-          exact (pred_body_binders_not_in_lexpr_map_fvars pred_name0 r M2' Hr).
+          exact (Hwf.(pwf_pred_binders_fresh) pred_name0 r M2' Hr).
         * etransitivity.
-          { exact (pred_body_subst_fvars_wf pred_name0 r args Hr). }
+          { exact (Hwf.(pwf_pred_fvars_bounded) pred_name0 r args Hr). }
           { exact HfvA'. }
         * exact HdomEq'.
         * exact Hstab'.
@@ -2830,8 +2950,7 @@ Section AssertionsProperties.
   Qed.
 
   Lemma trnsl_assertion_w_lexpr_subst assertion lexprs args arg_vals stk_id mp p1 p2
-      (Hinv_wf : ∀ inv r, inv_map !! inv = Some r → InvBodyWF r)
-      (Hpred_wf : ∀ pred r, pred_map !! pred = Some r → PredBodyWF r)
+      (Hwf : ProgramWF)
       (HSF : StackFree assertion)
       (HbA_M1 : assertion_exists_binders assertion ## lexpr_map_fvars (list_to_map (zip args lexprs)))
       (HbA_M2 : assertion_exists_binders assertion ## lexpr_map_fvars (list_to_map (zip args (map (λ val : lang.val, LVal (trnsl_val val)) arg_vals))))
@@ -2848,15 +2967,14 @@ Section AssertionsProperties.
                        eval_lvar (list_to_map (zip args (map (λ val, LVal (trnsl_val val)) arg_vals))) mp x.
     { intros x _. exact (eval_lvar_list_to_map_zip_forall2 args lexprs arg_vals mp HF2 x). }
     have Hstab := hstab_lexpr_subst_fwd args lexprs arg_vals HdomEq.
-    have Heq := trnsl_assertion_subst_congr Hinv_wf Hpred_wf assertion _ _ stk_id mp mp
+    have Heq := trnsl_assertion_subst_congr Hwf assertion _ _ stk_id mp mp
       HSF HbA_M1 HbA_M2 HfvA HdomEq Hstab Hbase.
     rewrite <- Hp1. rewrite Heq. rewrite Hp2.
     iIntros "H". iExact "H".
   Qed.
 
   Lemma trnsl_assertion_w_lexpr_subst_r assertion lexprs args arg_vals lvar_x ret_val stk stk_id mp p1 p2
-      (Hinv_wf : ∀ inv r, inv_map !! inv = Some r → InvBodyWF r)
-      (Hpred_wf : ∀ pred r, pred_map !! pred = Some r → PredBodyWF r)
+      (Hwf : ProgramWF)
       (HSF : StackFree assertion)
       (HbA_M1 : assertion_exists_binders assertion ## lexpr_map_fvars (<["#ret_val":=LVar lvar_x]>(list_to_map (zip args lexprs))))
       (HbA_M2 : assertion_exists_binders assertion ## lexpr_map_fvars (<["#ret_val":=LVal (trnsl_val ret_val)]>(list_to_map (zip args (map (λ val : lang.val, LVal (trnsl_val val)) arg_vals)))))
@@ -2878,7 +2996,7 @@ Section AssertionsProperties.
       eval_lvar (<["#ret_val":=LVal (trnsl_val ret_val)]>(list_to_map (zip args (map (λ val, LVal (trnsl_val val)) arg_vals))))
         mp x.
     { intros x Hx. exact (hbase_lexpr_subst_r args lexprs arg_vals lvar_x ret_val mp Hfresh_base HF2 x Hx). }
-    have Heq := trnsl_assertion_subst_congr Hinv_wf Hpred_wf assertion _ _ stk_id
+    have Heq := trnsl_assertion_subst_congr Hwf assertion _ _ stk_id
       (λ x0, if (x0 =? lvar_x)%string then trnsl_val ret_val else mp x0) mp
       HSF HbA_M1 HbA_M2 HfvA HdomEq Hstab_r Hbase_r.
     rewrite <- Hp2. rewrite <- Heq. rewrite Hp1.
@@ -2914,14 +3032,14 @@ Section AssertionsProperties.
       unfold trnsl_assertion_pre.
 
       rewrite (IH (subst inv_record.(inv_body) _ ) stk stk' mp); auto.
-      inversion Hsf. rewrite Hinv in H1. inversion H1. subst inv_record0. exact H2.
+      inversion Hsf. rewrite Hinv in H1. inversion H1. subst inv_record0. exact H3.
 
     - (* LPred *)
       rewrite /trnsl_assertion_str.
       destruct (pred_map !! pred_name0) as [pred_record|] eqn:Hpred; simpl; [|reflexivity].
       unfold trnsl_assertion_pre.
       rewrite (IH (subst pred_record.(pred_body) _) stk stk' mp); auto.
-      inversion Hsf. rewrite Hpred in H1. inversion H1. subst pred_record0. exact H2.
+      inversion Hsf. rewrite Hpred in H1. inversion H1. subst pred_record0. exact H3.
 
     - (* LAnd *)    
       inversion Hsf; subst a0 a3.
@@ -2958,10 +3076,10 @@ Section AssertionsProperties.
       + inversion Hsf. apply bi.wand_proper. { reflexivity. } exact (IHa stk stk' mp0 H0).
       + destruct (inv_map !! inv_name0) as [r|] eqn:Hr; [|reflexivity].
         simpl. f_equiv. apply IH.
-        inversion Hsf. rewrite Hr in H1. inversion H1. subst. exact H2.
+        inversion Hsf. rewrite Hr in H1. inversion H1. subst. exact H3.
       + destruct (pred_map !! pred_name0) as [r|] eqn:Hr; [|reflexivity].
         simpl. f_equiv. apply IH.
-        inversion Hsf. rewrite Hr in H1. inversion H1. subst. exact H2.
+        inversion Hsf. rewrite Hr in H1. inversion H1. subst. exact H3.
       + inversion Hsf. subst a0 a3. apply bi.sep_proper.
         { exact (IHa1 stk stk' mp0 H1). } exact (IHa2 stk stk' mp0 H2).
     - (* LimitPreserving *)
@@ -2982,16 +3100,19 @@ Section AssertionsProperties.
   Qed.
 
   Lemma stack_free_assertion_subst
-    (Hinv_wf : forall inv r, inv_map !! inv = Some r -> InvBodyWF r)
-    (Hpred_wf : forall pred r, pred_map !! pred = Some r -> PredBodyWF r)
+    (Hwf : ProgramWF)
     assertion subst_map :
     StackFree assertion -> StackFree (subst assertion subst_map).
   Proof.
     intros HSF. induction HSF; simpl; try constructor; try assumption.
-    - (* SF_Inv *) eapply SF_Inv. { exact H. }
-      rewrite (Hinv_wf _ _ H). exact IHHSF.
-    - (* SF_Pred *) eapply SF_Pred. { exact H. }
-      rewrite (Hpred_wf _ _ H). exact IHHSF.
+    - (* SF_Inv *)
+      have Hbwf := inv_body_wf_from_scoped inv_record (Hwf.(pwf_inv_fvars_scoped) _ _ H).
+      eapply SF_Inv. { exact H. } { rewrite map_length. exact H0. }
+      rewrite (Hbwf args subst_map H0). exact IHHSF.
+    - (* SF_Pred *)
+      have Hbwf := pred_body_wf_from_scoped pred_record (Hwf.(pwf_pred_fvars_scoped) _ _ H).
+      eapply SF_Pred. { exact H. } { rewrite map_length. exact H0. }
+      rewrite (Hbwf args subst_map H0). exact IHHSF.
   Qed.
   
 
