@@ -20,7 +20,13 @@ Inductive stackvar_addr :=
 Global Instance stackvar_addr_eq : EqDecision stackvar_addr.
 Proof. solve_decision. Qed.
 
-Global Declare Instance stackvar_addr_countable : Countable stackvar_addr.
+Global Instance stackvar_addr_countable : Countable stackvar_addr.
+Proof.
+  refine (inj_countable'
+    (λ a, match a with mk_stkvar_addr s v => (s, v) end)
+    (λ '(s, v), mk_stkvar_addr s v) _).
+  intros [s v]. done.
+Qed.
 
 
 Definition heap_cellR : cmra :=
@@ -87,10 +93,8 @@ Section definitions.
 
   Definition to_heap_cellR (v: val) : heap_cellR := (1%Qp, to_agree v).
   
-  Global Instance heap_add_fmap : FMap (gmap heap_addr).
-  Proof. apply gmap_fmap. Qed.
-
-  Global Declare Instance heap_addr_finmap : FinMap heap_addr (gmap heap_addr).
+  Global Instance heap_addr_finmap : FinMap heap_addr (gmap heap_addr).
+  Proof. apply gmap_finmap. Qed.
 
 
   Definition to_heapUR (h : heap) : heapUR :=

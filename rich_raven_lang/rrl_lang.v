@@ -52,8 +52,6 @@ Class ResourceAlgebra (A: Type) := {
   fpuAxiom : forall x y, fpuValid x y -> valid x /\ valid y /\ forall c, (valid (comp x c) -> valid (comp y c));
 }.
 
-Global Declare Instance RAEq : forall A: Type, EqDecision (ResourceAlgebra A).
-Global Declare Instance RACountable : forall A: Type, Countable (ResourceAlgebra A).
 
 Record RA_Pack := {
   RA_carrier :> Type;
@@ -314,11 +312,81 @@ Proof.
   all: try intros Heq; inversion Heq; auto.
 Qed.
 
-(* TODO: To be proved *)
-Global Declare Instance LExpr_Eq : EqDecision LExpr.
-Global Declare Instance LExpr_Countable : Countable LExpr.
+Global Instance val_countable : Countable val.
+Proof.
+  refine (inj_countable'
+    (λ v : val, match v with
+      | LitBool b => inl b
+      | LitInt i  => inr (inl i)
+      | LitUnit   => inr (inr (inl tt))
+      | LitLoc l  => inr (inr (inr l))
+    end)
+    (λ x : bool + (Z + (unit + loc)), match x with
+      | inl b             => LitBool b
+      | inr (inl i)       => LitInt i
+      | inr (inr (inl _)) => LitUnit
+      | inr (inr (inr l)) => LitLoc l
+    end) _).
+  intro v; destruct v; done.
+Qed.
 
-Global Declare Instance val_countable : Countable val.
+Global Instance LExpr_Eq : EqDecision LExpr.
+Proof. solve_decision. Qed.
+
+Global Instance LExpr_Countable : Countable LExpr.
+Proof.
+  (* lvar + val + un_op + bin_op is left-associative:
+     = ((lvar + val) + un_op) + bin_op
+     lvar x   ↦ inl (inl (inl x))
+     val v    ↦ inl (inl (inr v))
+     un_op op ↦ inl (inr op)
+     bin_op op ↦ inr op *)
+  set (enc := fix enc (e : LExpr) : gen_tree (lvar + val + un_op + bin_op) :=
+    match e with
+    | LVar x          => GenLeaf (inl (inl (inl x)))
+    | LVal v          => GenLeaf (inl (inl (inr v)))
+    | LUnOp op e      => GenNode 0 [GenLeaf (inl (inr op)); enc e]
+    | LBinOp op e1 e2 => GenNode 1 [GenLeaf (inr op); enc e1; enc e2]
+    | LIfE e1 e2 e3   => GenNode 2 [enc e1; enc e2; enc e3]
+    | LStuck          => GenNode 3 []
+    end).
+  set (dec := fix dec (t : gen_tree (lvar + val + un_op + bin_op)) : option LExpr :=
+    match t with
+    | GenLeaf (inl (inl (inl x)))             => Some (LVar x)
+    | GenLeaf (inl (inl (inr v)))             => Some (LVal v)
+    | GenNode 0 [GenLeaf (inl (inr op)); t']  =>
+        match dec t' with
+        | Some e' => Some (LUnOp op e')
+        | None    => None
+        end
+    | GenNode 1 [GenLeaf (inr op); t1; t2]   =>
+        match dec t1 with
+        | Some e1 => match dec t2 with
+                     | Some e2 => Some (LBinOp op e1 e2)
+                     | None    => None
+                     end
+        | None    => None
+        end
+    | GenNode 2 [t1; t2; t3]                 =>
+        match dec t1 with
+        | Some e1 => match dec t2 with
+                     | Some e2 => match dec t3 with
+                                  | Some e3 => Some (LIfE e1 e2 e3)
+                                  | None    => None
+                                  end
+                     | None    => None
+                     end
+        | None    => None
+        end
+    | GenNode 3 []                            => Some LStuck
+    | _                                       => None
+    end).
+  refine (inj_countable enc dec _).
+  intro e; induction e; simpl; try done.
+  - rewrite IHe. done.
+  - rewrite IHe1; rewrite IHe2. done.
+  - rewrite IHe1; rewrite IHe2; rewrite IHe3. done.
+Qed.
 
 Definition pvar_typs : Type := var -> typ.
 Definition lvar_typs : Type := lvar -> typ.

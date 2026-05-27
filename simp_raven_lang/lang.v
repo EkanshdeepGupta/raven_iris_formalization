@@ -16,6 +16,36 @@ Section expr.
 Inductive typ :=
 | TpInt | TpLoc | TpBool | TpUnit.
 
+Global Instance bin_op_eq_decision : EqDecision bin_op.
+Proof. solve_decision. Qed.
+
+Global Instance bin_op_countable : Countable bin_op.
+Proof.
+  refine (inj_countable'
+    (λ op, match op with
+      | AddOp => 0 | SubOp => 1 | MulOp => 2 | DivOp => 3 | ModOp => 4
+      | EqOp => 5 | NeOp => 6 | LtOp => 7 | GtOp => 8 | LeOp => 9 | GeOp => 10
+      | AndOp => 11 | OrOp => 12
+    end : nat)
+    (λ n, match n with
+      | 0 => AddOp | 1 => SubOp | 2 => MulOp | 3 => DivOp | 4 => ModOp
+      | 5 => EqOp | 6 => NeOp | 7 => LtOp | 8 => GtOp | 9 => LeOp | 10 => GeOp
+      | 11 => AndOp | _ => OrOp
+    end) _).
+  intros []; done.
+Qed.
+
+Global Instance un_op_eq_decision : EqDecision un_op.
+Proof. solve_decision. Qed.
+
+Global Instance un_op_countable : Countable un_op.
+Proof.
+  refine (inj_countable'
+    (λ op, match op with NotBoolOp => 0 | NegOp => 1 end : nat)
+    (λ n, match n with 0 => NotBoolOp | _ => NegOp end) _).
+  intros []; done.
+Qed.
+
 Global Instance typ_eq_decision : EqDecision typ.
 Proof. solve_decision. Qed.
 
@@ -88,7 +118,13 @@ Inductive heap_addr :=
 Global Instance heap_addr_eq : EqDecision heap_addr.
 Proof. solve_decision. Qed.
 
-Global Declare Instance heap_addr_countable : Countable heap_addr.
+Global Instance heap_addr_countable : Countable heap_addr.
+Proof.
+  refine (inj_countable'
+    (λ a, match a with heap_addr_constr l f => (l, f) end)
+    (λ '(l, f), heap_addr_constr l f) _).
+  intros [l f]. done.
+Qed.
 
 (* Heap maps locations to field-value pairs *)
 Definition heap := gmap heap_addr val.
