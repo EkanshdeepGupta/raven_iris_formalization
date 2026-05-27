@@ -635,7 +635,7 @@ Section MainTranslation.
           (* iCombine "Hcomb1"  as "Hcomb2". *)
 
           assert (HInvSet0 : invr ∈ inv_set) by (inversion Hwelldef; done).
-          assert (inv_set_to_namespace (mask ∖ {[invr]}) = inv_set_to_namespace mask ∖ ↑inv_namespace_map invr) as H0. { apply (inv_map_set_minus_subseteq Hwf); try done. }
+          assert (inv_set_to_namespace (mask ∖ {[invr]}) = inv_set_to_namespace mask ∖ ↑inv_namespace_map invr) as H0. { apply inv_map_set_minus_subseteq; try done. }
           rewrite H0; destruct H0.
 
           inversion Hwelldef as [ | | | | | | | | | | | | | inv args' stmt' HInvSet HargsWellDef HBodywelldef | ]; subst stmt' args'.
